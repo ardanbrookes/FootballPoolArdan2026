@@ -1,0 +1,46 @@
+{
+  "name": "footballpoolardan2026",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n vite,worker -c magenta,cyan \"npm:dev:client\" \"npm:dev:worker\"",
+    "dev:client": "vite",
+    "dev:worker": "wrangler dev --port 8787",
+    "build": "vite build",
+    "preview": "npm run build && wrangler dev --port 8787",
+    "deploy": "npm run build && wrangler deploy",
+    "cf:db:create": "wrangler d1 create football-pool",
+    "cf:migrate:local": "wrangler d1 migrations apply football-pool --local",
+    "cf:migrate:remote": "wrangler d1 migrations apply football-pool --remote",
+    "cf:tail": "wrangler tail",
+    "schedule:build": "node scripts/build-schedule.mjs",
+    "schedule:load:local": "wrangler d1 execute football-pool --local --file=data/schedule-2026.sql",
+    "schedule:load:remote": "wrangler d1 execute football-pool --remote --file=data/schedule-2026.sql",
+    "seed:local": "node scripts/admin.mjs seed --force",
+    "seed:remote": "node scripts/admin.mjs seed --force --remote",
+    "tick:local": "node scripts/admin.mjs tick",
+    "waivers:local": "node scripts/admin.mjs waivers/process",
+    "import:sleeper": "node scripts/import-sleeper.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.2",
+    "luxon": "^3.7.2",
+    "pinia": "^3.0.3",
+    "vue": "^3.5.40",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "concurrently": "^9.2.1",
+    "vite": "^8.2.0",
+    "wrangler": "^4.123.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260811.1": true
+  }
+}

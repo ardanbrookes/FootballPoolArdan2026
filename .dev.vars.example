@@ -1,0 +1,9 @@
+# Copy to .dev.vars for local `wrangler dev`. Never commit .dev.vars.
+# In production these are set with `npx wrangler secret put <NAME>`.
+
+# Signs session cookies. Generate one with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+SESSION_SECRET=dev-only-insecure-secret-change-me
+
+# Guards POST /api/admin/seed and the manual job endpoints.
+ADMIN_TOKEN=dev-only-admin-token

@@ -1,0 +1,66 @@
+name = "football-pool-2026"
+main = "worker/index.js"
+compatibility_date = "2026-08-16"
+# Needed for AsyncLocalStorage (request-scoped D1 binding) and node:crypto (scrypt).
+compatibility_flags = ["nodejs_compat"]
+
+# Serve the league at <worker>.<subdomain>.workers.dev.
+workers_dev = true
+
+# Preview URLs publish a separate public URL for every version you deploy.
+# Useful for staging a change, but it multiplies the number of live addresses,
+# so it is off by default here. Flip to true if you ever want a staging link.
+preview_urls = false
+
+# The built Vue SPA is served straight from Cloudflare's edge.
+# `run_worker_first` keeps /api/* from being swallowed by the SPA fallback.
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "football-pool"
+database_id = "609f9eec-3af4-4a54-a54b-4786ca6c9fb3"
+migrations_dir = "migrations"
+
+# Cron Triggers fire in UTC only, so a literal "Tuesday 3am Eastern" schedule
+# would drift by an hour across daylight saving. Instead we tick frequently and
+# let the league clock decide what is actually due; the handler is idempotent,
+# so a missed tick self-heals on the next one.
+[triggers]
+crons = ["*/15 * * * *"]
+
+[vars]
+# The league is in BC. America/Vancouver tracks Pacific DST automatically, so
+# 3:00am stays 3:00am local from September through January.
+LEAGUE_TIMEZONE = "America/Vancouver"
+
+# Waivers process Tuesday 3:00 AM Pacific.
+WAIVER_PROCESS_WEEKDAY = "2"
+WAIVER_PROCESS_HOUR = "3"
+WAIVER_PROCESS_MINUTE = "0"
+
+# All rosters lock Sunday 10:00 AM Pacific — the moment the early window kicks
+# off (1:00 PM Eastern). Nothing can be shuffled once any Sunday game is live.
+BLANKET_LOCK_WEEKDAY = "7"
+BLANKET_LOCK_HOUR = "10"
+BLANKET_LOCK_MINUTE = "0"
+
+# Rosters reopen once the week's last game finishes — a real time, not a clock
+# time, so it tracks Monday-night kickoffs and games that run long. The weekday/
+# hour below are only a fallback for when the schedule hasn't been synced.
+WEEK_RESET_MODE = "after_last_game"
+WEEK_RESET_BUFFER_MINUTES = "30"
+WEEK_RESET_WEEKDAY = "2"
+WEEK_RESET_HOUR = "0"
+WEEK_RESET_MINUTE = "0"
+
+SLEEPER_BASE_URL = "https://api.sleeper.app/v1"
+SLEEPER_PLAYER_TTL_HOURS = "24"
+
+# SESSION_SECRET and ADMIN_TOKEN are secrets, not vars:
+#   npx wrangler secret put SESSION_SECRET
+#   npx wrangler secret put ADMIN_TOKEN
+# Local development reads them from .dev.vars instead.

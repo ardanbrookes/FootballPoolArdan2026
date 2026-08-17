@@ -1,0 +1,404 @@
+# Football Pool 2026
+
+A custom fantasy football league for a group of friends. Vue 3 + Vite on the
+front, Cloudflare Workers + D1 on the back, NFL data from the public Sleeper API.
+
+---
+
+## Quick start
+
+```bash
+npm install
+cp .dev.vars.example .dev.vars
+npm run cf:migrate:local
+npm run schedule:build && npm run schedule:load:local
+npm run build
+npm run dev
+```
+
+Then open http://localhost:5173 and sign in as any manager below with the
+password `football`:
+
+`ardan` (commissioner), `sam`, `jordan`, `casey`, `riley`, `morgan`, `avery`,
+`quinn`, `reese`, `harper`
+
+Seed the demo league once the dev server is up:
+
+```bash
+npm run seed:local
+```
+
+`npm run dev` runs two processes: Vite on :5173 for the client, and
+`wrangler dev` on :8787 running the real Worker against a local D1 database.
+Vite proxies `/api` to the Worker, so the dev environment matches production.
+
+> The `npm run build` above is needed because Wrangler requires `dist/` to
+> exist for the static-assets binding. You only need to repeat it when you want
+> the Worker to serve fresh assets; during development Vite handles the client.
+
+---
+
+## How the league works
+
+### The weekly cycle
+
+Four phases, all boundaries configurable. This is the core business logic and
+lives in [`worker/services/locks.js`](worker/services/locks.js).
+
+| When | Phase | What's allowed |
+|---|---|---|
+| Sun 20:00 → Tue 03:00 | **Waiver period** | Everyone unrostered is on waivers. Claims only — no instant pickups. Lineups open. |
+| Tue 03:00 → first kickoff | **Open window** | Adds, drops, swaps, lineups — all first come, first served. |
+| First kickoff → Sun 13:00 | **Thursday night lock** | **Only the two teams playing Thursday are frozen.** Everyone else stays fully open. |
+| Sun 13:00 → Sun 20:00 | **Blanket lock** | Everything freezes, including bench moves, until the week resets. |
+
+Two details worth knowing:
+
+- **The Thursday lock is per-team, not league-wide.** If Buffalo plays Detroit on
+  Thursday, only Bills and Lions players lock. This is the whole point of the
+  compromise, and it's enforced per player on every transaction.
+- **A player whose game is in progress is always locked**, regardless of phase.
+  This closes the gap created by resetting the week at 20:00 Sunday while Sunday
+  night and Monday night games are still being played.
+
+The active NFL week is derived from the *schedule*, not from a stored counter, so
+a missed cron run can't cause the app to lock the wrong teams. If the stored week
+and the schedule disagree, the API reports `weekDrift` and the UI shows a warning.
+
+### Waivers — Time Since Last Claim
+
+The team that has gone longest without winning a claim picks first; a team that
+has never won one sorts to the very front. Ties break toward the worse record,
+then fewer points scored, then a stable per-team seed.
+
+Processing re-sorts after every award, so winning a claim drops you to the back
+and everyone gets a turn before anyone gets seconds. Claims that fail are
+reported with a reason ("Claimed by a higher-priority team", "Drop candidate was
+no longer on your roster"). Anyone left unclaimed becomes a free agent.
+
+Preview what the next run would do without changing anything:
+
+```bash
+curl -b cookies.txt http://localhost:8787/api/league/waivers/preview
+```
+
+### Changing the deadlines
+
+Defaults live in `[vars]` in [`wrangler.toml`](wrangler.toml). The commissioner
+can also override them at runtime without a redeploy:
+
+```bash
+curl -X PUT http://localhost:8787/api/league/settings \
+  -H 'content-type: application/json' -b cookies.txt \
+  -d '{"key":"timing.waiverProcess","value":{"weekday":3,"hour":2,"minute":30}}'
+```
+
+Weekdays are 1 = Monday … 7 = Sunday. Everything is interpreted in
+`LEAGUE_TIMEZONE` and adjusts for daylight saving automatically.
+
+To see what would be locked at some future moment:
+
+```
+GET /api/league/lock-state?at=2026-09-17T21:00:00
+```
+
+---
+
+## Deploying to Cloudflare
+
+```bash
+# 1. Create the D1 database, then paste the printed database_id into wrangler.toml
+npm run cf:db:create
+
+# 2. Apply the schema
+npm run cf:migrate:remote
+
+# 3. Load the NFL schedule (see "Why the schedule is a file" below)
+npm run schedule:build
+npm run schedule:load:remote
+
+# 4. Set secrets
+npx wrangler secret put SESSION_SECRET   # node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+npx wrangler secret put ADMIN_TOKEN
+
+# 5. Build and deploy
+npm run deploy
+
+# 6. Seed the league
+ADMIN_TOKEN=<token> WORKER_URL=https://<your-worker>.workers.dev npm run seed:remote
+```
+
+Cost: this fits inside Cloudflare's free tier comfortably — D1's free allowance is
+5 GB and millions of reads per day, and a ten-manager league uses a rounding error
+of that.
+
+---
+
+## Making changes after launch
+
+Live at **https://football-pool-2026.ardanbrookes.workers.dev**
+
+### 1. Code changes (UI, business logic, routes)
+
+The common case. Test locally, then ship:
+
+```bash
+npm run dev          # Vite :5173 + real Worker on local D1 :8787
+npm run deploy       # builds the client and pushes the Worker
+```
+
+`npm run deploy` runs `npm run build` for you. Deploys are near-instant and
+atomic — there's no window where half the app is updated.
+
+### 2. Schema changes
+
+**Order matters.** Apply the migration to the remote database *before* deploying
+code that depends on it, or the live app will error until you catch up.
+
+```bash
+# 1. Write migrations/0002_whatever.sql (forward-only; never edit 0001)
+npm run cf:migrate:local     # apply locally
+npm run dev                  # test against it
+npm run cf:migrate:remote    # THEN apply to production
+npm run deploy               # THEN ship the code
+```
+
+Note that `wrangler rollback` reverts the *Worker*, not the database. A bad
+migration is not undone by a rollback, so test locally first.
+
+### 3. Schedule refresh (after flex scheduling)
+
+The NFL moves games between time slots late in the season, which changes which
+teams lock on Thursday. Re-pull and re-apply — the SQL upserts, so it's safe to
+repeat:
+
+```bash
+npm run schedule:build
+npm run schedule:load:remote
+```
+
+No deploy needed; this is data, not code.
+
+### 4. Changing deadlines
+
+Two ways, depending on whether you want it permanent:
+
+- **Runtime, no deploy** — commissioner `PUT /api/league/settings` (see above).
+  Takes effect immediately, survives deploys, stored in the database.
+- **Permanent default** — edit `[vars]` in `wrangler.toml`, then `npm run deploy`.
+
+### 5. Rotating a secret
+
+No deploy needed — secrets are read at request time:
+
+```bash
+npx wrangler secret put SESSION_SECRET   # signs everyone out
+npx wrangler secret put ADMIN_TOKEN
+```
+
+### If something breaks
+
+```bash
+npx wrangler rollback        # revert to the previous Worker version
+npm run cf:tail              # stream live logs
+```
+
+### Things that will bite you
+
+- **Never run `seed` with `force` against production.** `POST /api/admin/seed?force=1`
+  deletes every roster, transaction and result. It is guarded by `ADMIN_TOKEN`
+  for exactly this reason.
+- **Local and remote are different databases.** `--local` and `--remote` are
+  separate worlds; changing `database_id` in `wrangler.toml` also repoints the
+  *local* one, which then needs re-migrating and re-seeding.
+- **`dist/` must exist for `wrangler dev` to start.** Run `npm run build` once
+  after a fresh clone.
+
+---
+
+### Cron
+
+Cloudflare Cron Triggers only run in UTC, so encoding "Tuesday 3am Eastern"
+directly would drift by an hour twice a year. Instead the trigger fires every 15
+minutes and [`worker/jobs/tick.js`](worker/jobs/tick.js) decides what's actually
+due, using the same league clock as the lock rules. Each job records its last run,
+so a missed tick (deploy, outage) simply catches up on the next one instead of
+being skipped.
+
+Watch it live with `npm run cf:tail`.
+
+---
+
+## Data sources
+
+| Data | Source | Notes |
+|---|---|---|
+| Players | Sleeper `/players/nfl` | ~1,000 fantasy-relevant players after filtering. Refreshed daily. |
+| Season/week | Sleeper `/state/nfl` | |
+| Weekly stats | Sleeper `/stats/nfl/regular/{season}/{week}` | Raw stat lines; points computed at read time. |
+| Kickoff times | ESPN scoreboard, **via a build-time script** | See below. |
+
+### Why the schedule is a generated file
+
+Sleeper's v1 API doesn't publish a schedule (`/schedule/nfl/regular/{season}`
+returns 404), so kickoff times come from ESPN's public scoreboard.
+
+**ESPN returns 403 to requests originating from workerd.** Identical requests from
+Node succeed, and Sleeper works fine from the Worker, so this is ESPN bot-detection
+on the TLS fingerprint — not something a header can fix.
+
+So the schedule is generated in Node and applied as SQL:
+
+```bash
+npm run schedule:build          # writes data/schedule-2026.sql
+npm run schedule:load:remote
+```
+
+This is arguably the better shape regardless: kickoff times drive the
+Thursday-night lock, which makes them correctness-critical, and pinning them into
+a versioned file removes a live third-party dependency from the hot path. The
+generated SQL upserts, so **re-run it after flex-scheduling changes** — those move
+games between time slots and therefore change what locks when.
+
+### Scoring
+
+Standard PPR, defined in `scoring` in [`worker/config.js`](worker/config.js).
+Points are computed from raw stat lines at read time, so editing the scoring table
+re-scores the whole season with no backfill.
+
+---
+
+## Project layout
+
+```
+migrations/          D1 schema (plain SQLite DDL)
+data/                Generated schedule SQL
+scripts/             Node-side tooling (schedule builder, admin CLI wrapper)
+worker/
+  index.js           Worker entry — fetch + scheduled handlers
+  context.js         Request-scoped env/D1 via AsyncLocalStorage
+  db.js              D1 helpers: query/get/run/batch
+  config.js          League config (roster slots, scoring, timings)
+  services/          Business logic — locks, waivers, roster, trades, scoring
+  routes/            Hono HTTP routes
+  jobs/              Cron dispatcher and the weekly jobs
+  seed.js            Demo league builder
+src/                 Vue 3 client (views, components, stores)
+```
+
+A couple of structural notes:
+
+- **D1 has no interactive transactions.** You can't BEGIN, read, decide, and
+  COMMIT across awaits — the only atomic primitive is `batch()`. So mutating flows
+  validate everything up front, collect statements, and submit them together. The
+  waiver processor is built this way: it resolves the entire run against an
+  in-memory simulation, then commits once.
+- **The D1 binding travels in AsyncLocalStorage** rather than being threaded
+  through every function signature, which keeps the service layer readable.
+
+### Admin endpoints
+
+Operational tasks are HTTP endpoints guarded by `ADMIN_TOKEN`, because Workers
+have no CLI process that can hold a D1 binding. `scripts/admin.mjs` wraps them:
+
+```bash
+npm run seed:local                       # or: node scripts/admin.mjs seed --force
+node scripts/admin.mjs tick              # run the cron dispatcher now
+node scripts/admin.mjs tick --job=waivers
+node scripts/admin.mjs week-reset
+node scripts/admin.mjs sync/players
+node scripts/admin.mjs status
+```
+
+---
+
+## Security — read before going public
+
+This was built as a private league app and **auth is deliberately minimal**. The
+following were consciously deferred and should be addressed before the URL is
+shared beyond people you trust:
+
+- **Everyone shares the demo password `football`.** Replace with per-manager
+  passwords. There is no signup flow, password reset, or email verification —
+  users are created by the seed script.
+- **No rate limiting on login.** The login endpoint will happily accept unlimited
+  guesses. Cloudflare Rate Limiting Rules can fix this without code changes.
+- **`SESSION_SECRET` must be set to a real random value** before deploying. The
+  fallback in `config.js` is a known string and is only safe for local dev.
+- **`ADMIN_TOKEN` guards destructive endpoints**, including `/api/admin/seed?force=1`,
+  which wipes the league. Treat it like a root password.
+
+What *is* handled: passwords are PBKDF2-HMAC-SHA256 (100k iterations, per-user
+salt) and never stored or logged in plaintext; sessions are opaque random tokens
+stored hashed, in httpOnly cookies, `Secure` in production; password comparison is
+constant-time; and every transaction re-checks ownership and locks server-side
+rather than trusting the client.
+
+### Keeping secrets out of git
+
+Secrets live in exactly two places, neither of which is the repo:
+
+| | Local dev | Production |
+|---|---|---|
+| `SESSION_SECRET`, `ADMIN_TOKEN` | `.dev.vars` (gitignored) | `npx wrangler secret put NAME` |
+
+Three layers guard against a leak:
+
+**1. `.gitignore`** covers `.dev.vars`, `.env*`, `*.pem`, `*.key`, SSH keys and
+credential dumps. Verify at any time with:
+
+```bash
+git check-ignore -v .dev.vars
+```
+
+**2. A pre-commit hook** catches what `.gitignore` cannot — a real token pasted
+into a file that is *already tracked*, which is the likelier accident. It also
+catches secret files force-added with `git add -f`. It lives in `.githooks/` so
+it is versioned and shared, but git does not enable hooks automatically:
+**every clone must run this once.**
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It allows obvious placeholders (`dev-only-…`, `REPLACE_WITH_…`, `your-…`) so the
+`.example` files still commit cleanly. Genuine false positive? `git commit --no-verify`.
+
+**3. GitHub push protection.** In the repo: *Settings → Code security → Secret
+scanning → Push protection*. Free on public repos, and it blocks a known-format
+credential at push time even if the local hook was bypassed.
+
+### If a secret does get committed
+
+Deleting the file in a later commit **does not help** — the value is still in the
+history, and if it was ever pushed, assume it was scraped within minutes.
+
+**Rotate first, clean up second:**
+
+```bash
+npx wrangler secret put SESSION_SECRET   # new value; invalidates all sessions
+npx wrangler secret put ADMIN_TOKEN
+```
+
+Rotating `SESSION_SECRET` signs everyone out, which is exactly what you want if a
+session-signing key leaked. Only after rotating is it worth rewriting history
+(`git filter-repo`) — and that is optional, since the rotated value is now
+worthless to anyone holding it.
+
+---
+
+## Open questions
+
+Things worth deciding as the league firms up:
+
+1. **Sunday-night reset vs. Monday night football.** The week currently resets
+   Sunday 20:00, while SNF and MNF are still being played. The in-progress-game
+   rule stops anyone dropping a player mid-game, but you could still drop a
+   Monday-night player Monday morning. Moving `WEEK_RESET` to Tuesday 02:00 would
+   close that entirely — at the cost of a shorter waiver claim window.
+2. **Kickers.** Included by default. Delete the `K` line from `rosterSlots` in
+   `worker/config.js` to drop them; nothing else needs changing.
+3. **Playoffs.** `playoff_week` is stored but no bracket logic exists yet — the
+   season is a 14-week round robin.
+4. **IR slots.** The schema supports `on_ir`, but there's no UI for moving players
+   to and from IR yet.
