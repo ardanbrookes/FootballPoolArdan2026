@@ -36,6 +36,7 @@ const navItems = [
   { to: '/', label: 'Home' },
   { to: '/acquisitions', label: 'Acquisitions' },
   { to: '/trades', label: 'Trades' },
+  { to: '/news', label: 'News' },
   { to: '/league', label: 'League' },
   { to: '/rules', label: 'Rules' },
 ]

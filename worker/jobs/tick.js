@@ -18,6 +18,7 @@ import { getTiming } from '../services/settings.js'
 import { getLockState } from '../services/locks.js'
 import { announcePhaseChange } from '../services/chat.js'
 import { getSyncEntry, recordSync } from '../services/sleeper.js'
+import { ingestNews, TEAM_ROTATION } from '../services/news.js'
 import {
   runWaiverProcessing,
   runWeekReset,
@@ -97,6 +98,27 @@ export async function runTick({ force = null } = {}) {
   if (force === 'stats' || force === null) {
     await runStatsRefresh()
     ran.push({ job: 'stats-refresh' })
+  }
+
+  // News. Deliberately isolated and last: it is the only job that depends on a
+  // third party we don't otherwise rely on, and nothing in the league hinges on
+  // it, so a bad day at ESPN must never stop waivers from processing.
+  //
+  // The league feed comes in every tick. ESPN caps each feed at 50 articles, so
+  // one club's feed is pulled alongside it, rotating through all 32 — that
+  // deepens the archive to roughly a full lap every eight hours and is what
+  // makes per-player history exist at all.
+  if (force === 'news' || force === null) {
+    try {
+      const league = await ingestNews()
+      const index = Math.floor(Date.now() / 900_000) % TEAM_ROTATION.length
+      const team = await ingestNews({ team: TEAM_ROTATION[index] })
+      await recordSync('news', 'ok', `league ${league.stored}/${league.tagged} tagged, ${team.team} ${team.stored}`)
+      ran.push({ job: 'news', league: league.stored, team: team.team, tagged: league.tagged + team.tagged })
+    } catch (err) {
+      await recordSync('news', 'error', String(err.message || err).slice(0, 200))
+      ran.push({ job: 'news', error: String(err.message || err) })
+    }
   }
 
   // Player dictionary + kickoff times, once a day.

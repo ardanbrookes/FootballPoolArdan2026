@@ -13,6 +13,7 @@ import { recalculateMatchups, recalculateStandings } from '../services/scoring.j
 import { ensurePlayoffMatchups } from '../services/playoffs.js'
 import { syncWeekStats, syncWeekProjections, syncPlayers, recordSync } from '../services/sleeper.js'
 import { syncWeek } from '../services/schedule.js'
+import { pruneNews, clearUnresolvedXref } from '../services/news.js'
 
 function allLeagues() {
   return query('SELECT id, season, season_type, current_week, playoff_week FROM leagues')
@@ -188,6 +189,18 @@ export async function runDailySync() {
     } catch (err) {
       console.error(`[sync] schedule sync failed for league ${league.id}:`, err.message)
     }
+  }
+
+  // Keep the news archive from growing without end. Two months is well past
+  // the point anyone scrolls back, and comfortably covers a full season's
+  // history for a single player.
+  try {
+    summary.newsPruned = (await pruneNews()).deleted
+    // Order matters: the player dictionary has just been refreshed above, so
+    // names that failed to resolve yesterday get another go against it.
+    summary.newsXrefCleared = (await clearUnresolvedXref()).cleared
+  } catch (err) {
+    console.error('[sync] news maintenance failed:', err.message)
   }
 
   await recordSync('daily-sync', 'ok', JSON.stringify(summary).slice(0, 200))

@@ -17,6 +17,7 @@ import rosterRoutes from './routes/roster.js'
 import waiverRoutes from './routes/waivers.js'
 import tradeRoutes from './routes/trades.js'
 import chatRoutes from './routes/chat.js'
+import newsRoutes from './routes/news.js'
 import adminRoutes from './routes/admin.js'
 import { runTick } from './jobs/tick.js'
 import { getSyncLog } from './services/sleeper.js'
@@ -39,6 +40,7 @@ for (const prefix of ['/league', '/leagues/:leagueId']) {
   app.route(`${prefix}/waivers`, waiverRoutes)
   app.route(`${prefix}/trades`, tradeRoutes)
   app.route(`${prefix}/chat`, chatRoutes)
+  app.route(`${prefix}/news`, newsRoutes)
 }
 
 app.notFound((c) => c.json({ error: 'Not found.' }, 404))

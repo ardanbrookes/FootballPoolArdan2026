@@ -246,6 +246,7 @@ Watch it live with `npm run cf:tail`.
 | Season/week | Sleeper `/state/nfl` | |
 | Weekly stats | Sleeper `/stats/nfl/regular/{season}/{week}` | Raw stat lines; points computed at read time. |
 | Kickoff times | ESPN scoreboard, **via a build-time script** | See below. |
+| News | ESPN news API, `site.web.api.espn.com` | Free, no key. Tagged with athletes and teams. **Host matters — see below.** |
 
 ### Why the schedule is a generated file
 
@@ -407,6 +408,61 @@ Read this before changing the areas it touches.
 team abbreviations like `DEN` for defences). This is what makes the Sleeper
 import a direct lookup with no name matching — normally the hardest part of
 such an import. Don't renumber them.
+
+### ESPN blocks one hostname and not the other
+
+The schedule notes above say ESPN 403s from workerd. That is true of
+`site.api.espn.com` — but **`site.web.api.espn.com` serves the identical payload
+and returns 200 from workerd.** Same paths, same JSON, same query parameters.
+
+That is the only reason the news feed can run inside the Worker at all. If news
+ingest suddenly starts failing, check the hostname in `worker/services/news.js`
+before assuming ESPN changed their API.
+
+It probably also means the schedule could be fetched live rather than from a
+generated file. That has not been changed, because the lock state machine
+depends on those kickoff times and a working system is worth more than a tidier
+one — but it is the first thing to try if the schedule file becomes a nuisance.
+
+### Sleeper's `espn_id` is dead — news is matched by name
+
+Sleeper's player dump has an `espn_id` field, which looks like the obvious way
+to tie an ESPN article to one of our players. It is a trap: Sleeper stopped
+populating it around 2023. Mahomes and Jefferson have one; Bijan Robinson, Puka
+Nacua, Brock Bowers and Jaxson Dart are all `null`. Only ~27% of the top 300
+carry one, and the missing ones are exactly the young stars news is written
+about.
+
+So ESPN athletes are matched to our players by normalised name — accents,
+punctuation and Jr/Sr/III stripped. Measured against a real feed, that resolved
+**every fantasy-relevant athlete ESPN tagged**; the only misses were linemen,
+defensive backs and punters, who are not in our pool by design.
+
+Two consequences worth knowing:
+
+- Results are cached in `news_player_xref`, including *negative* results, so we
+  do not re-attempt the same forty defenders on every refresh.
+- That negative cache is cleared after each daily player sync. Without it, a
+  miss would be permanent — and the misses that matter fix themselves. Keenan
+  Allen was unmatched on the day ESPN reported he had signed with the Colts,
+  because a free agent isn't in our dictionary until he is on a roster. Same
+  story for every rookie.
+
+### News accumulates; ESPN only shows you 50
+
+Every ESPN news feed returns at most the 50 most recent articles, whatever
+`limit` says. So ingest merges into `news_articles` rather than replacing it,
+and the archive is ours.
+
+The tick pulls the league feed plus one club's feed, rotating through all 32, so
+the archive deepens by a full lap roughly every eight hours. Without the team
+rotation, a quiet player's news would be pushed out by a busy news day and
+per-player history would barely exist.
+
+News ingest is deliberately the **last** thing the tick does and is wrapped in
+its own try/catch. It is the only job depending on a third party nothing else
+needs, and nothing in the league hinges on it, so a bad day at ESPN must never
+stop waivers from processing.
 
 ### Standings must exclude playoff weeks
 

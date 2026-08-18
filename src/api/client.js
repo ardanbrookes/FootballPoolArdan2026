@@ -68,6 +68,9 @@ export const api = {
   searchPlayers: (params) => request('GET', `/league/players${qs(params)}`),
   setWatchlist: (playerId, watched) => request('POST', '/league/watchlist', { playerId, watched }),
 
+  // News
+  news: (params) => request('GET', `/league/news${qs(params)}`),
+
   // Chat
   chat: (before) => request('GET', `/league/chat${qs({ before })}`),
   postChat: (body) => request('POST', '/league/chat', { body }),
