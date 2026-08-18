@@ -62,11 +62,57 @@ async function loadMyRoster() {
   }
 }
 
+const PAGE_SIZE = 30
+const hasMore = ref(true)
+const loadingMore = ref(false)
+
+/**
+ * Merge by id rather than replace.
+ *
+ * A background poll only ever asks for the newest page, so replacing would
+ * throw away every older page the reader had loaded — scrolling back would
+ * undo itself once a minute.
+ */
+function mergeArticles(incoming) {
+  const byId = new Map(articles.value.map((a) => [a.id, a]))
+  for (const a of incoming) byId.set(a.id, a)
+  articles.value = [...byId.values()].sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1))
+}
+
 async function load() {
-  const payload = await api.news({ ...activeQuery.value, limit: 40 })
-  articles.value = payload.articles
+  // Capture the query this request belongs to. A poll for the previous filter
+  // can land after the filter has changed, and merging it would show articles
+  // that don't belong to what the page now says it is showing.
+  const query = activeQuery.value
+  const issuedFor = JSON.stringify(query)
+  const payload = await api.news({ ...query, limit: PAGE_SIZE })
+  if (JSON.stringify(activeQuery.value) !== issuedFor) return
+
+  mergeArticles(payload.articles)
+  // A short first page means the archive holds nothing older for this filter.
+  if (payload.articles.length < PAGE_SIZE) hasMore.value = false
   error.value = null
   await loadMyRoster()
+}
+
+/** Page backwards from the oldest article on screen. */
+async function loadMore() {
+  if (loadingMore.value || !hasMore.value || !articles.value.length) return
+  const query = activeQuery.value
+  const issuedFor = JSON.stringify(query)
+  const oldest = articles.value[articles.value.length - 1]
+
+  loadingMore.value = true
+  try {
+    const payload = await api.news({ ...query, limit: PAGE_SIZE, before: oldest.publishedAt })
+    if (JSON.stringify(activeQuery.value) !== issuedFor) return
+    if (payload.articles.length) mergeArticles(payload.articles)
+    if (payload.articles.length < PAGE_SIZE) hasMore.value = false
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    loadingMore.value = false
+  }
 }
 
 const live = useLive(
@@ -94,7 +140,18 @@ const live = useLive(
  * the next tick, so all the synchronous state changes collapse into one fetch.
  */
 const queryKey = computed(() => JSON.stringify(activeQuery.value))
-watch(queryKey, () => live.refresh())
+watch(queryKey, async () => {
+  // Reset the accumulated pages — they belong to the previous filter.
+  articles.value = []
+  hasMore.value = true
+  // Deliberately not live.refresh(): that skips when a poll is already in
+  // flight, which would leave the list empty with nothing scheduled to fill it.
+  try {
+    await load()
+  } catch (err) {
+    error.value = err.message
+  }
+})
 
 let debounce
 // Set when the box is filled programmatically (picking a suggestion), so that
@@ -266,7 +323,13 @@ const heading = computed(() => {
     </div>
 
     <article v-for="item in articles" :key="item.id" class="card news-card">
-      <a class="news-link" :href="item.url" target="_blank" rel="noopener noreferrer">
+      <a
+        class="news-link"
+        :class="{ 'no-thumb': !item.imageUrl }"
+        :href="item.url"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
         <img v-if="item.imageUrl" class="thumb" :src="item.imageUrl" :alt="''" loading="lazy" />
         <div class="body">
           <h3 class="headline">{{ item.headline }}</h3>
@@ -297,6 +360,15 @@ const heading = computed(() => {
         <span v-for="t in item.teams.slice(0, 3)" :key="t" class="tag team">{{ t }}</span>
       </div>
     </article>
+
+    <div v-if="articles.length" class="load-more">
+      <button v-if="hasMore" class="btn" type="button" :disabled="loadingMore" @click="loadMore">
+        {{ loadingMore ? 'Loading…' : 'Load more' }}
+      </button>
+      <p v-else class="tiny faint end-note">
+        That's everything stored for this filter. The archive grows as news comes in.
+      </p>
+    </div>
   </div>
 </template>
 
@@ -409,9 +481,26 @@ const heading = computed(() => {
   color: inherit;
 }
 
+/* Not every article ships an image; without this the thumbnail column stays
+   reserved and the text sits in a column of empty space. */
+.news-link.no-thumb {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .news-link:hover {
   background: var(--surface-hover);
   text-decoration: none;
+}
+
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.25rem 0 0.5rem;
+}
+
+.end-note {
+  margin: 0;
+  text-align: center;
 }
 
 .news-link:hover .headline {

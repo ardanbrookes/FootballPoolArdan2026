@@ -34,10 +34,10 @@ async function signOut() {
 
 const navItems = [
   { to: '/', label: 'Home' },
+  { to: '/league', label: 'League' },
   { to: '/acquisitions', label: 'Acquisitions' },
   { to: '/trades', label: 'Trades' },
   { to: '/news', label: 'News' },
-  { to: '/league', label: 'League' },
   { to: '/rules', label: 'Rules' },
 ]
 

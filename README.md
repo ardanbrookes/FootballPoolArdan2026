@@ -464,6 +464,32 @@ its own try/catch. It is the only job depending on a third party nothing else
 needs, and nothing in the league hinges on it, so a bad day at ESPN must never
 stop waivers from processing.
 
+"Load more" pages backwards with a `before` cursor. The 60-second poll only ever
+asks for the newest page and **merges by id**, so paging back doesn't undo
+itself once a minute. Each request also records which filter it was issued for
+and discards itself if the filter changed while it was in flight — otherwise a
+poll for the previous scope lands and shows articles that don't belong to it.
+
+### Known limits of the news feed
+
+Worth knowing before someone asks why a story is missing:
+
+- **History starts when ingest started.** ESPN serves only the newest 50 per
+  feed, so the archive can't be backfilled — it only deepens going forward, to
+  a 60-day ceiling.
+- **One source.** ESPN only. No PFT, no Rotoworld, no beat writers.
+- **The tags are ESPN's, not ours.** If ESPN doesn't tag a player, that article
+  won't appear under their filter even when the name is in the text. And their
+  fantasy roundups tag 50+ players, so "My team" surfaces some generic content.
+- **Fantasy positions only.** Linemen, defenders and punters never resolve. News
+  about your D/ST's best pass rusher reaches you only via the club tag.
+- **D/ST news is club-wide** — all Colts news, not Colts-defense news.
+- **Search is a literal `LIKE`** over headline and summary, with no stemming or
+  fuzzy matching, and it only searches what's already stored.
+- **New signings and rookies can lag a day**, until the daily player sync adds
+  them and the crosswalk retries.
+- **Up to 15 minutes behind**, on top of ESPN's own publishing delay.
+
 ### Standings must exclude playoff weeks
 
 `recalculateStandings` filters to `week <= regularSeasonWeeks`. Without it,
