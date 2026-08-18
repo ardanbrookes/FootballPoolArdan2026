@@ -19,7 +19,6 @@ const SCOPES = [
 
 const scope = ref('league')
 const articles = ref([])
-const status = ref(null)
 const error = ref(null)
 
 // Player search: picking a suggestion pins the feed to one player; typing
@@ -66,7 +65,6 @@ async function loadMyRoster() {
 async function load() {
   const payload = await api.news({ ...activeQuery.value, limit: 40 })
   articles.value = payload.articles
-  status.value = payload.status
   error.value = null
   await loadMyRoster()
 }
