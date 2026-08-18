@@ -5,6 +5,7 @@
  * priority order, and recent results.
  */
 import { ref, computed, onMounted } from 'vue'
+import { useLive } from '@/composables/useLive.js'
 import api from '@/api/client.js'
 import { useLeagueStore } from '@/stores/league.js'
 import LockBanner from '@/components/LockBanner.vue'
@@ -165,6 +166,21 @@ const moveToIr = (player) => irAction(player, api.placeOnIr, `${player.name} mov
 const activateIr = (player) => irAction(player, api.activateFromIr, `${player.name} activated from IR.`)
 
 const when = (iso) => formatInZone(iso, league.config?.timing?.timezone)
+
+/**
+ * Keep the pool, claims and results current.
+ *
+ * Held off while a move is in flight or a dialog is open — refreshing the list
+ * out from under an open drop-picker would change what the buttons mean.
+ */
+const live = useLive(
+  async () => {
+    if (busyPlayerId.value || picker.value.open || dropCandidate.value) return
+    await Promise.all([loadAll(), league.refreshLocks()])
+    searchRef.value?.reload()
+  },
+  { intervalMs: 20000, immediate: false },
+)
 
 onMounted(loadAll)
 </script>

@@ -5,9 +5,9 @@
  * next. Standings live on the League page; duplicating them here added nothing.
  */
 import { ref, computed, onMounted } from 'vue'
+import { useLive } from '@/composables/useLive.js'
 import api from '@/api/client.js'
 import { useLeagueStore } from '@/stores/league.js'
-import DeadlineTimer from '@/components/DeadlineTimer.vue'
 import LineupEditor from '@/components/LineupEditor.vue'
 import MatchupCard from '@/components/MatchupCard.vue'
 import MatchupScoreboard from '@/components/MatchupScoreboard.vue'
@@ -37,9 +37,10 @@ const earlyGames = computed(() => {
 
 const lockedTeams = computed(() => new Set(league.lockState?.lockedNflTeams || []))
 
-async function loadAll() {
-  loading.value = true
-  error.value = null
+/** `quiet` skips the loading state, so a background poll doesn't flash the UI. */
+async function loadAll({ quiet = false } = {}) {
+  if (!quiet) loading.value = true
+  if (!quiet) error.value = null
   try {
     const week = league.currentWeek
     const [rosterData, matchupData, gamesData] = await Promise.all([
@@ -56,9 +57,10 @@ async function loadAll() {
       lastWeek.value = previous.matchups
     }
   } catch (err) {
-    error.value = err.message
+    if (!quiet) error.value = err.message
+    else throw err
   } finally {
-    loading.value = false
+    if (!quiet) loading.value = false
   }
 }
 
@@ -107,7 +109,66 @@ const moveToIr = (player) =>
 const activateFromIr = (player) =>
   irAction(api.activateFromIr, player, `${player.name} activated from IR.`)
 
+/** One call, both moves — see swapIr on the server for why this exists. */
+async function swapIr({ activate, place }) {
+  irBusy.value = true
+  message.value = null
+  error.value = null
+  try {
+    const data = await api.swapIr(activate.id, place.id)
+    roster.value = data.roster
+    message.value = `${place.name} to IR, ${activate.name} back on your bench.`
+    setTimeout(() => (message.value = null), 4000)
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    irBusy.value = false
+  }
+}
+
+/** Set while the lineup has unsaved edits, so background polls hold off. */
+const lineupDirty = ref(false)
+
 const kickoffLabel = (iso) => formatKickoff(iso, league.config?.timing?.timezone)
+
+/**
+ * Put the block that matters right now at the top.
+ *
+ * The week has three moods, and the four lock phases map onto them:
+ *
+ *   waiver_period    Monday night to Tuesday 3am — the week just ended, so you
+ *                    want to see how it went. Results first, matchup last.
+ *   open / early     Tuesday to Sunday 10am — the week is being built. Roster
+ *   game lock        first, matchup next, results last.
+ *   blanket_lock     Sunday 10am to Monday's final whistle — nothing can be
+ *                    changed, so it's pure spectating. Matchup first.
+ */
+const layout = computed(() => {
+  switch (league.phase) {
+    case 'waiver_period':
+      return ['results', 'roster', 'matchup']
+    case 'blanket_lock':
+      return ['matchup', 'roster', 'results']
+    default:
+      // open and early_game_lock: managing the roster is the job.
+      return ['roster', 'matchup', 'results']
+  }
+})
+
+/**
+ * Keep the page live.
+ *
+ * A background refresh must not stomp on an edit in progress, so it skips while
+ * the lineup has unsaved changes or an IR move is in flight — otherwise a poll
+ * landing mid-edit would silently discard what the manager was doing.
+ */
+const live = useLive(
+  async () => {
+    if (saving.value || irBusy.value || lineupDirty.value) return
+    await Promise.all([loadAll({ quiet: true }), league.refreshLocks()])
+  },
+  { intervalMs: 20000, immediate: false },
+)
 
 onMounted(loadAll)
 </script>
@@ -117,97 +178,87 @@ onMounted(loadAll)
     <div v-if="message" class="alert alert-success">{{ message }}</div>
     <div v-if="error" class="alert alert-error">{{ error }}</div>
 
-    <!-- The countdown carries the phase on its own; the full explainer banner
-         lives on Acquisitions, where the phase actually changes what you can do. -->
-    <div class="card">
-      <div class="card-body deadline-bar">
-        <DeadlineTimer :deadline="league.lockState?.nextDeadline" @elapsed="league.refreshLocks()" />
-        <span class="phase-tag tiny">{{ league.lockState?.phaseLabel }}</span>
-      </div>
-    </div>
+    <!-- Phase and its changeover time live in the top bar now — they're
+         relevant on every page, not just this one. -->
 
-    <MatchupScoreboard v-if="matchupDetail" :matchup="matchupDetail" :my-team-id="myTeamId" />
-    <div v-else-if="loading" class="card"><div class="empty">Loading matchup…</div></div>
-    <div v-else class="card"><div class="empty">No matchup scheduled this week.</div></div>
+    <!-- Blocks are rendered in whatever order the current phase calls for, so
+         the thing you came to do is at the top. Reordering the DOM rather than
+         using CSS `order` keeps reading and tab order matching the layout. -->
+    <template v-for="block in layout" :key="block">
+      <!-- Your matchup -->
+      <template v-if="block === 'matchup'">
+        <MatchupScoreboard v-if="matchupDetail" :matchup="matchupDetail" :my-team-id="myTeamId" />
+        <div v-else-if="loading" class="card"><div class="empty">Loading matchup…</div></div>
+        <div v-else class="card"><div class="empty">No matchup scheduled this week.</div></div>
+      </template>
 
-    <div class="grid grid-2">
-      <LineupEditor
-        v-if="roster"
-        :roster="roster"
-        :can-edit="league.allows.lineup"
-        :saving="saving"
-        :ir-busy="irBusy"
-        @save="saveLineup"
-        @ir-place="moveToIr"
-        @ir-activate="activateFromIr"
-      />
-      <div v-else-if="loading" class="card"><div class="empty">Loading roster…</div></div>
+      <!-- Roster, chat and locks travel together -->
+      <div v-else-if="block === 'roster'" class="grid grid-2">
+        <LineupEditor
+          v-if="roster"
+          :roster="roster"
+          :can-edit="league.allows.lineup"
+          :saving="saving"
+          :ir-busy="irBusy"
+          @save="saveLineup"
+          @ir-place="moveToIr"
+          @ir-activate="activateFromIr"
+          @ir-swap="swapIr"
+          @dirty-change="lineupDirty = $event"
+        />
+        <div v-else-if="loading" class="card"><div class="empty">Loading roster…</div></div>
 
-      <div class="stack">
-        <ChatBox />
+        <div class="stack">
+          <ChatBox />
 
-        <div class="card">
-          <div class="card-header"><h2>Locks this week</h2></div>
-          <div class="card-body">
-            <ul v-if="earlyGames.length" class="lock-list">
-              <li v-for="game in earlyGames" :key="game.id">
-                <span :class="{ 'pill pill-warn': lockedTeams.has(game.away_team) }">{{ game.away_team }}</span>
-                <span class="faint">@</span>
-                <span :class="{ 'pill pill-warn': lockedTeams.has(game.home_team) }">{{ game.home_team }}</span>
-                <span class="tiny faint">{{ kickoffLabel(game.kickoff_at) }}</span>
-              </li>
-            </ul>
-            <p v-else class="small faint" style="margin: 0">
-              No early games — everything locks at the Sunday blanket lock.
-            </p>
+          <div class="card">
+            <div class="card-header"><h2>Locks this week</h2></div>
+            <div class="card-body">
+              <ul v-if="earlyGames.length" class="lock-list">
+                <li v-for="game in earlyGames" :key="game.id">
+                  <span :class="{ 'pill pill-warn': lockedTeams.has(game.away_team) }">
+                    {{ game.away_team }}
+                  </span>
+                  <span class="faint">@</span>
+                  <span :class="{ 'pill pill-warn': lockedTeams.has(game.home_team) }">
+                    {{ game.home_team }}
+                  </span>
+                  <span class="tiny faint">{{ kickoffLabel(game.kickoff_at) }}</span>
+                </li>
+              </ul>
+              <p v-else class="small faint" style="margin: 0">
+                No early games — everything locks at the Sunday blanket lock.
+              </p>
+            </div>
           </div>
         </div>
+      </div>
 
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h2>Last week's results</h2>
-        <span v-if="lastWeek.length" class="tiny faint">Week {{ lastWeekNumber }}</span>
-      </div>
-      <div class="card-body">
-        <div v-if="lastWeek.length" class="grid grid-2">
-          <MatchupCard
-            v-for="matchup in lastWeek"
-            :key="matchup.id"
-            :matchup="matchup"
-            :my-team-id="myTeamId"
-          />
+      <!-- Last week's results -->
+      <div v-else-if="block === 'results'" class="card">
+        <div class="card-header">
+          <h2>Last week's results</h2>
+          <span v-if="lastWeek.length" class="tiny faint">Week {{ lastWeekNumber }}</span>
         </div>
-        <div v-else class="empty">
-          {{ league.currentWeek <= 1 ? "The season hasn't started yet." : 'No results for last week.' }}
+        <div class="card-body">
+          <div v-if="lastWeek.length" class="grid grid-2">
+            <MatchupCard
+              v-for="matchup in lastWeek"
+              :key="matchup.id"
+              :matchup="matchup"
+              :my-team-id="myTeamId"
+            />
+          </div>
+          <div v-else class="empty">
+            {{ league.currentWeek <= 1 ? "The season hasn't started yet." : 'No results for last week.' }}
+          </div>
         </div>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.deadline-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.phase-tag {
-  padding: 0.2rem 0.55rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
 .lock-list {
   list-style: none;
   margin: 0;

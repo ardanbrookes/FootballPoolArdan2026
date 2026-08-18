@@ -33,17 +33,34 @@ import { getTiming } from './settings.js'
 import { getCycle, now as clockNow, label, toIso } from './clock.js'
 
 export const PHASE = {
+  /**
+   * Before the season's first kickoff. The weekly cycle hasn't started, so there
+   * are no waivers to clear and nothing to lock — free agency is simply open and
+   * stays open. Without this the app spent August advertising a Tuesday waiver
+   * run that would never mean anything, while the phase claimed free agency and
+   * the pool said otherwise.
+   */
+  PRESEASON: 'preseason',
   BLANKET_LOCK: 'blanket_lock',
   WAIVER_PERIOD: 'waiver_period',
   OPEN: 'open',
   EARLY_GAME_LOCK: 'early_game_lock',
 }
 
+/**
+ * What the league calls each phase.
+ *
+ * The weekly cycle has three names from a manager's point of view: the open
+ * period, the game period (from the first kickoff until the last whistle,
+ * whether the lock is partial or total), and the waiver period. Preseason sits
+ * outside the cycle entirely, so it keeps its own name.
+ */
 export const PHASE_LABEL = {
-  [PHASE.BLANKET_LOCK]: 'Rosters locked',
+  [PHASE.PRESEASON]: 'Preseason',
+  [PHASE.OPEN]: 'Open period',
+  [PHASE.EARLY_GAME_LOCK]: 'Game period',
+  [PHASE.BLANKET_LOCK]: 'Game period',
   [PHASE.WAIVER_PERIOD]: 'Waiver period',
-  [PHASE.OPEN]: 'Open window',
-  [PHASE.EARLY_GAME_LOCK]: 'Thursday night lock',
 }
 
 /**
@@ -149,11 +166,25 @@ export async function getLockState(leagueId, ref) {
     }
   }
 
+  // Has the season actually started? Everything before the first kickoff is
+  // preseason: no cycle, no waivers, free agency permanently open.
+  const seasonStart = league
+    ? await get(
+        `SELECT MIN(kickoff_at) AS first_kickoff FROM nfl_games
+          WHERE season = @season AND season_type = @seasonType`,
+        { season: league.season, seasonType: league.season_type },
+      )
+    : null
+  const seasonStartsAt = seasonStart?.first_kickoff ?? null
+  const preseason = Boolean(seasonStartsAt) && nowIso < seasonStartsAt
+
   // Out of season — or before the schedule is published — this cycle has no
   // games at either end. Without this the league sits in a blanket lock every
   // Sunday-to-Tuesday of the offseason, with nothing to lock for.
   const cycleHasGames = completed.week != null || earlyGames.length > 0
-  const phase = resolvePhase(at, cycle, firstKickoff, cycleHasGames)
+  const phase = preseason
+    ? PHASE.PRESEASON
+    : resolvePhase(at, cycle, firstKickoff, cycleHasGames)
 
   return {
     phase,
@@ -175,7 +206,9 @@ export async function getLockState(leagueId, ref) {
     },
     lockedNflTeams: [...lockedNflTeams],
     inProgressNflTeams: [...inProgressNflTeams],
-    nextDeadline: nextDeadline(at, cycle, firstKickoff, phase),
+    preseason,
+    seasonStartsAt,
+    nextDeadline: nextDeadline(at, cycle, firstKickoff, phase, seasonStartsAt),
     allows: allowsForPhase(phase),
   }
 }
@@ -194,6 +227,10 @@ function resolvePhase(at, cycle, firstKickoff, cycleHasGames) {
 
 function allowsForPhase(phase) {
   switch (phase) {
+    case PHASE.PRESEASON:
+      // Nothing has been played, so nothing is locked and nobody is on waivers.
+      // Claims are off because there is no processing run to resolve them.
+      return { lineup: true, freeAgentAdd: true, waiverClaim: false, drop: true, trade: true }
     case PHASE.BLANKET_LOCK:
       // Claims may still be queued — they don't take effect until Tuesday.
       return { lineup: false, freeAgentAdd: false, waiverClaim: true, drop: false, trade: false }
@@ -210,20 +247,33 @@ function allowsForPhase(phase) {
   }
 }
 
-function nextDeadline(at, cycle, firstKickoff, phase) {
+function nextDeadline(at, cycle, firstKickoff, phase, seasonStartsAt) {
+  // In the preseason the only date that means anything is the first kickoff.
+  // Everything else in the cycle is dormant until then.
+  if (phase === PHASE.PRESEASON && seasonStartsAt) {
+    const kickoff = DateTime.fromISO(seasonStartsAt, { zone: cycle.zone })
+    return {
+      name: 'season_start',
+      title: 'Season kicks off',
+      label: label(kickoff),
+      at: toIso(kickoff),
+    }
+  }
+
+  // Only three things are worth counting down to: waivers clearing, the partial
+  // lock when the week's first game kicks off, and the full lock on Sunday.
+  // The Monday unlock is deliberately not a target — it's a release rather than
+  // a deadline, and nobody needs to race it.
   const candidates = []
 
-  if (phase === PHASE.BLANKET_LOCK) {
-    candidates.push({ name: 'week_reset', title: 'Rosters unlock', at: cycle.weekResetAt })
-  }
   if (cycle.waiverProcessAt > at) {
-    candidates.push({ name: 'waivers', title: 'Waivers process', at: cycle.waiverProcessAt })
+    candidates.push({ name: 'waivers', title: 'Waivers clear', at: cycle.waiverProcessAt })
   }
   if (firstKickoff) {
     const kickoff = DateTime.fromISO(firstKickoff, { zone: cycle.zone })
-    if (kickoff > at) candidates.push({ name: 'tnf_lock', title: 'Thursday night lock', at: kickoff })
+    if (kickoff > at) candidates.push({ name: 'partial_lock', title: 'Partial lock', at: kickoff })
   }
-  candidates.push({ name: 'blanket_lock', title: 'All rosters lock', at: cycle.nextBlanketLockAt })
+  candidates.push({ name: 'full_lock', title: 'Full lock', at: cycle.nextBlanketLockAt })
 
   const next = candidates.filter((c) => c.at > at).sort((a, b) => a.at - b.at)[0]
   return next ? { name: next.name, title: next.title, label: label(next.at), at: toIso(next.at) } : null

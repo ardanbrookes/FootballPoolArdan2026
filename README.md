@@ -42,28 +42,37 @@ Vite proxies `/api` to the Worker, so the dev environment matches production.
 
 ### The weekly cycle
 
-Four phases, all boundaries configurable. This is the core business logic and
-lives in [`worker/services/locks.js`](worker/services/locks.js).
+All times **Pacific** (`America/Vancouver`, so DST is handled automatically).
+This is the core business logic and lives in
+[`worker/services/locks.js`](worker/services/locks.js).
 
-| When | Phase | What's allowed |
+| When | Phase (shown as) | What's allowed |
 |---|---|---|
-| Sun 20:00 → Tue 03:00 | **Waiver period** | Everyone unrostered is on waivers. Claims only — no instant pickups. Lineups open. |
-| Tue 03:00 → first kickoff | **Open window** | Adds, drops, swaps, lineups — all first come, first served. |
-| First kickoff → Sun 13:00 | **Thursday night lock** | **Only the two teams playing Thursday are frozen.** Everyone else stays fully open. |
-| Sun 13:00 → Sun 20:00 | **Blanket lock** | Everything freezes, including bench moves, until the week resets. |
+| Before the season's first kickoff | **Preseason** | Free agency open, no waivers exist, **no cycle jobs run at all** |
+| Tue 03:00 → first kickoff of the week | **Open period** | Adds, drops, swaps, lineups — first come, first served |
+| First kickoff → Sun 10:00 | **Game period** | **Only the teams already playing are frozen.** Everyone else stays fully open |
+| Sun 10:00 → Monday's final whistle | **Game period** | Everything freezes, trades close, free agents move to waivers. Claims can still be queued |
+| Final whistle → Tue 03:00 | **Waiver period** | Scores final, standings updated, rosters and trades reopen. Claims only — no instant pickups |
 
-Two details worth knowing:
+Four details worth knowing:
 
 - **The Thursday lock is per-team, not league-wide.** If Buffalo plays Detroit on
   Thursday, only Bills and Lions players lock. This is the whole point of the
   compromise, and it's enforced per player on every transaction.
+- **The Monday boundary is derived, not scheduled.** It's the last game of the
+  week's actual kickoff plus its length plus a 30-minute buffer, so a flexed
+  kickoff or a game running long moves it automatically.
+- **Sunday's lock is 10:00 Pacific** — the moment the early window kicks off
+  (13:00 Eastern). Nothing can be shuffled once any Sunday game is live.
 - **A player whose game is in progress is always locked**, regardless of phase.
-  This closes the gap created by resetting the week at 20:00 Sunday while Sunday
-  night and Monday night games are still being played.
 
 The active NFL week is derived from the *schedule*, not from a stored counter, so
 a missed cron run can't cause the app to lock the wrong teams. If the stored week
 and the schedule disagree, the API reports `weekDrift` and the UI shows a warning.
+
+Note the season opener is not necessarily a Thursday — 2026 opens on a
+**Wednesday**. Nothing keys off the weekday; the boundary is "first kickoff of
+the week", which handles Wednesday, Friday and Saturday games identically.
 
 ### Waivers — Time Since Last Claim
 
@@ -386,6 +395,72 @@ session-signing key leaked. Only after rotating is it worth rewriting history
 worthless to anyone holding it.
 
 ---
+
+## Design decisions and traps
+
+Things that cost real debugging time, or that look wrong until you know why.
+Read this before changing the areas it touches.
+
+### Our player IDs *are* Sleeper's player IDs
+
+`players.id` is Sleeper's `player_id` verbatim (numeric strings for people,
+team abbreviations like `DEN` for defences). This is what makes the Sleeper
+import a direct lookup with no name matching — normally the hardest part of
+such an import. Don't renumber them.
+
+### Standings must exclude playoff weeks
+
+`recalculateStandings` filters to `week <= regularSeasonWeeks`. Without it,
+playoff results inflate regular-season records — and because seeds derive from
+standings, the bracket's own results would re-order the seeds that created it.
+
+### D1 batches are capped at 100 statements
+
+`batch()` chunks anything larger. Unbounded batches take the Worker down — the
+pool reset queues ~950 statements. Chunks are **not** one transaction, so
+anything order-sensitive must be submitted as separate, correctly ordered calls.
+
+### The Sleeper import must clear before it inserts
+
+`roster_players` is unique on `(league_id, player_id)`. Clearing and inserting
+team-by-team means one team's insert can collide with a player still on another
+team whose delete hasn't run. All clears go first, then all inserts, then the
+pool is recomputed — in that order, as separate batches.
+
+### A just-drafted league has FREE AGENTS, not waivers
+
+Both the seed and the importer leave `player_pool_state` empty. Putting undrafted
+players on waivers made a fresh league look broken: the phase read "open" while
+every player was claim-only. The pool moves to waivers on its own at the first
+Sunday lock.
+
+### Vue unwraps refs in templates
+
+`toggle(give, id)` hands the function a plain array, not the ref — so `.value`
+is `undefined` and the handler throws silently on every click. Pass the side by
+name (`toggle('give', id)`) and resolve the ref inside. This broke trades
+entirely and was invisible without the console.
+
+### `grid-template-columns: 1fr` is not `minmax(0, 1fr)`
+
+A bare `1fr` keeps an automatic minimum, which resolves to min-content. A wide
+child — a `<select>`, whose intrinsic width comes from its longest option —
+stretches the track past the viewport. On a phone that makes the browser zoom
+out and leaves the sticky header short of the screen edge. Form controls also
+carry `min-width: 0` globally for the same reason.
+
+### Live polling pauses when the tab is hidden
+
+[`useLive`](src/composables/useLive.js) skips while `document.visibilityState`
+is hidden and catches up on return. It also refuses to refresh over unsaved
+lineup edits, an in-flight IR move, an open dialog or a half-built trade offer —
+a poll landing mid-edit would silently discard the manager's work.
+
+### IR needs the swap endpoint
+
+A full roster plus a full IR is otherwise a deadlock: activating needs a free
+spot, and the only way to make one is to drop somebody. `/ir/swap` does both
+moves at once so the count nets out.
 
 ## Open questions
 

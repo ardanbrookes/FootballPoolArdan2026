@@ -8,6 +8,7 @@ import {
   ensureLineupRows,
   placeOnIr,
   activateFromIr,
+  swapIr,
 } from '../services/roster.js'
 import { getLockState } from '../services/locks.js'
 import { searchPlayers, getPlayerWithAvailability, setWatchlist } from '../services/players.js'
@@ -155,6 +156,36 @@ router.post('/ir/activate', requireTeam, async (c) => {
     season: league.season,
     week: league.current_week,
     playerId: String(playerId),
+  })
+
+  return c.json({
+    ...result,
+    roster: await getTeamRoster(league.id, team.id, league.season, league.current_week),
+  })
+})
+
+/**
+ * Swap the IR slot: activate one player and place another, atomically.
+ * Body: { activatePlayerId, placePlayerId }
+ *
+ * Exists because a full roster with a full IR would otherwise be stuck — you
+ * couldn't activate without a spare spot, and couldn't make one without dropping.
+ */
+router.post('/ir/swap', requireTeam, async (c) => {
+  const league = c.get('league')
+  const team = c.get('team')
+  const { activatePlayerId, placePlayerId } = c.get('body') || {}
+  if (!activatePlayerId || !placePlayerId) {
+    return c.json({ error: 'activatePlayerId and placePlayerId are both required.' }, 400)
+  }
+
+  const result = await swapIr({
+    leagueId: league.id,
+    teamId: team.id,
+    season: league.season,
+    week: league.current_week,
+    activatePlayerId: String(activatePlayerId),
+    placePlayerId: String(placePlayerId),
   })
 
   return c.json({

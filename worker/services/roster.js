@@ -565,3 +565,82 @@ export async function activateFromIr({ leagueId, teamId, season, week, playerId 
 
   return { playerId, onIr: false }
 }
+
+/**
+ * Swap one player off IR and another on, in a single operation.
+ *
+ * Without this a full roster plus a full IR is a deadlock: activating needs an
+ * open roster spot, and the only way to make one is to drop somebody — so a
+ * second injury costs you a player purely for bookkeeping reasons. Because the
+ * two moves net out, the roster count never changes and no drop is needed.
+ */
+export async function swapIr({ leagueId, teamId, season, week, activatePlayerId, placePlayerId }) {
+  const locks = await getLockState(leagueId)
+  assertAllowed(locks, 'lineup', `${locks.phaseLabel} — roster moves are closed.`)
+
+  const [leaving, arriving] = await Promise.all([
+    get(
+      `SELECT p.*, rp.on_ir FROM roster_players rp JOIN players p ON p.id = rp.player_id
+        WHERE rp.league_id = @leagueId AND rp.team_id = @teamId AND p.id = @playerId`,
+      { leagueId, teamId, playerId: activatePlayerId },
+    ),
+    get(
+      `SELECT p.*, rp.on_ir FROM roster_players rp JOIN players p ON p.id = rp.player_id
+        WHERE rp.league_id = @leagueId AND rp.team_id = @teamId AND p.id = @playerId`,
+      { leagueId, teamId, playerId: placePlayerId },
+    ),
+  ])
+
+  if (!leaving) throw httpError('The player you want to activate is not on your roster.', 404)
+  if (!arriving) throw httpError('The player you want to move to IR is not on your roster.', 404)
+  if (!leaving.on_ir) throw httpError(`${leaving.full_name} isn't on injured reserve.`, 409)
+  if (arriving.on_ir) throw httpError(`${arriving.full_name} is already on injured reserve.`, 409)
+
+  if (!isIrEligible(arriving)) {
+    throw httpError(
+      `${arriving.full_name} isn't eligible for IR. Only players listed as ` +
+        `${rosterConfig.irEligibleStatuses.join(', ')} can be placed there.`,
+      409,
+      'IR_INELIGIBLE',
+    )
+  }
+
+  // The arriving player is coming off the active roster, so they must be movable
+  // — you can't shelve someone whose game is already under way.
+  assertPlayerMovable(locks, arriving, 'move to IR')
+
+  await batch([
+    stmt(
+      `UPDATE roster_players SET on_ir = 0
+        WHERE league_id = @leagueId AND team_id = @teamId AND player_id = @activateId`,
+      { leagueId, teamId, activateId: activatePlayerId },
+    ),
+    stmt(
+      `UPDATE roster_players SET on_ir = 1
+        WHERE league_id = @leagueId AND team_id = @teamId AND player_id = @placeId`,
+      { leagueId, teamId, placeId: placePlayerId },
+    ),
+    // An IR player can't be a starter.
+    stmt(
+      `UPDATE lineups SET player_id = NULL
+        WHERE league_id = @leagueId AND team_id = @teamId AND season = @season
+          AND week = @week AND player_id = @placeId`,
+      { leagueId, teamId, season, week, placeId: placePlayerId },
+    ),
+    stmt(
+      `INSERT INTO transactions (league_id, team_id, type, source, player_id, related_player_id, season, week, notes)
+       VALUES (@leagueId, @teamId, 'ir', 'ir_swap', @placeId, @activateId, @season, @week, @notes)`,
+      {
+        leagueId,
+        teamId,
+        placeId: placePlayerId,
+        activateId: activatePlayerId,
+        season,
+        week,
+        notes: `IR swap: ${arriving.full_name} in (${arriving.injury_status}), ${leaving.full_name} out`,
+      },
+    ),
+  ])
+
+  return { activated: activatePlayerId, placed: placePlayerId }
+}

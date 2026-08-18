@@ -61,6 +61,8 @@ export const api = {
   dropPlayer: (playerId) => request('POST', '/league/drop', { playerId }),
   placeOnIr: (playerId) => request('POST', '/league/ir/place', { playerId }),
   activateFromIr: (playerId) => request('POST', '/league/ir/activate', { playerId }),
+  swapIr: (activatePlayerId, placePlayerId) =>
+    request('POST', '/league/ir/swap', { activatePlayerId, placePlayerId }),
 
   // Players
   searchPlayers: (params) => request('GET', `/league/players${qs(params)}`),

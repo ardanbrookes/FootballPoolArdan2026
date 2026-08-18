@@ -11,7 +11,7 @@
  * changes roster shape rather than the week's lineup, so it goes through its own
  * endpoints and takes effect immediately — the parent handles those events.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import PlayerChip from './PlayerChip.vue'
 
 const props = defineProps({
@@ -22,7 +22,7 @@ const props = defineProps({
   irBusy: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['save', 'ir-place', 'ir-activate'])
+const emit = defineEmits(['save', 'ir-place', 'ir-activate', 'ir-swap', 'dirty-change'])
 
 const openSlot = ref(null)
 const draft = ref(null)
@@ -37,6 +37,10 @@ const dirty = computed(() => {
   if (!draft.value) return false
   return props.roster.starters.some((s) => (s.player?.id ?? null) !== (draft.value[s.slot] ?? null))
 })
+
+// The parent polls in the background; it needs to know not to refresh over the
+// top of edits that haven't been saved yet.
+watch(dirty, (value) => emit('dirty-change', value))
 
 /** Everyone available to start — IR players are excluded by construction. */
 const allPlayers = computed(() => {
@@ -128,6 +132,26 @@ function placeOnIr(player) {
   irOpen.value = false
   emit('ir-place', player)
 }
+
+/**
+ * When IR is full, offer a swap instead of a dead end.
+ *
+ * Activating normally needs a free roster spot, so a full roster with a full IR
+ * would force a drop just to shelve a newly injured player. Swapping nets out —
+ * one comes off IR to the bench as the other goes on — so nobody is lost.
+ */
+const irFull = computed(() => irPlayers.value.length >= irSlots.value && irSlots.value > 0)
+const swapOpenFor = ref(null)
+
+function toggleSwap(irPlayer) {
+  if (!props.canEdit || props.irBusy) return
+  swapOpenFor.value = swapOpenFor.value === irPlayer.id ? null : irPlayer.id
+}
+
+function doSwap(irPlayer, incoming) {
+  swapOpenFor.value = null
+  emit('ir-swap', { activate: irPlayer, place: incoming })
+}
 </script>
 
 <template>
@@ -193,19 +217,47 @@ function placeOnIr(player) {
           <span class="faint">{{ irPlayers.length }} / {{ irSlots }}</span>
         </div>
 
-        <div v-for="player in irPlayers" :key="player.id" class="slot ir-row">
-          <span class="slot-label tiny">IR</span>
-          <PlayerChip :player="player" />
-          <span v-if="player.healthyOnIr" class="pill pill-warn tiny" title="No longer injured">
-            healthy
-          </span>
-          <button
-            class="btn btn-sm"
-            :disabled="!canEdit || irBusy"
-            @click="emit('ir-activate', player)"
-          >
-            Activate
-          </button>
+        <div v-for="player in irPlayers" :key="player.id" class="slot-group">
+          <div class="slot ir-row">
+            <span class="slot-label tiny">IR</span>
+            <PlayerChip :player="player" />
+            <span v-if="player.healthyOnIr" class="pill pill-warn tiny" title="No longer injured">
+              healthy
+            </span>
+            <button
+              v-if="irFull && irCandidates.length"
+              class="btn btn-sm"
+              :disabled="!canEdit || irBusy"
+              title="Swap this player out and another injured player in"
+              @click="toggleSwap(player)"
+            >
+              Swap
+            </button>
+            <button
+              class="btn btn-sm"
+              :disabled="!canEdit || irBusy"
+              @click="emit('ir-activate', player)"
+            >
+              Activate
+            </button>
+          </div>
+
+          <div v-if="swapOpenFor === player.id" class="picker">
+            <div class="swap-note tiny faint">
+              {{ player.name }} moves to your bench, and whoever you pick takes the IR slot. No drop
+              needed.
+            </div>
+            <button
+              v-for="candidate in irCandidates"
+              :key="candidate.id"
+              class="candidate"
+              :disabled="candidate.locked || irBusy"
+              :title="candidate.lockReason || ''"
+              @click="doSwap(player, candidate)"
+            >
+              <PlayerChip :player="candidate" />
+            </button>
+          </div>
         </div>
 
         <template v-if="irPlayers.length < irSlots">

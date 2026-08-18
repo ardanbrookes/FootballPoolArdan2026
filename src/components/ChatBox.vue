@@ -8,12 +8,13 @@
  * GIFs: a pasted Tenor/Giphy/image link renders inline. That covers the usual
  * "paste a reaction gif" flow without needing an API key or a picker UI.
  */
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import api from '@/api/client.js'
+import { useLive, agoLabel } from '@/composables/useLive.js'
 
 const props = defineProps({
-  /** Poll interval in ms. */
-  pollMs: { type: Number, default: 15000 },
+  /** Poll interval in ms. Chat is the one thing people watch, so it's brisk. */
+  pollMs: { type: Number, default: 8000 },
 })
 
 const messages = ref([])
@@ -21,7 +22,10 @@ const draft = ref('')
 const sending = ref(false)
 const error = ref(null)
 const scroller = ref(null)
-let timer
+
+/** Ticks once a second purely so the "updated Xs ago" caption counts up. */
+const nowTick = ref(Date.now())
+let clockTimer
 
 /** Direct image/GIF links render inline; everything else stays text. */
 const IMAGE_RE = /https?:\/\/\S+\.(?:gif|gifv|png|jpe?g|webp)(?:\?\S*)?/i
@@ -44,16 +48,18 @@ const EVENT_ICON = {
   ir: '✚',
 }
 
+/**
+ * Only scroll when the stream actually grew, or when explicitly asked. Snapping
+ * to the bottom on every poll would fight anyone reading back through history.
+ */
 async function load({ scroll = false } = {}) {
-  try {
-    const data = await api.chat()
-    const grew = data.messages.length !== messages.value.length
-    messages.value = data.messages
-    if (scroll || grew) await scrollToBottom()
-  } catch (err) {
-    error.value = err.message
-  }
+  const data = await api.chat()
+  const grew = data.messages.length !== messages.value.length
+  messages.value = data.messages
+  if (scroll || grew) await scrollToBottom()
 }
+
+const live = useLive(load, { intervalMs: props.pollMs, immediate: false })
 
 async function scrollToBottom() {
   await nextTick()
@@ -98,23 +104,32 @@ const withDividers = computed(() => {
   return out
 })
 
-onMounted(async () => {
-  await load({ scroll: true })
-  timer = setInterval(load, props.pollMs)
-})
-onUnmounted(() => clearInterval(timer))
+const updatedLabel = computed(() => agoLabel(live.lastUpdated.value, nowTick.value))
 
-watch(() => props.pollMs, (ms) => {
-  clearInterval(timer)
-  timer = setInterval(load, ms)
+onMounted(async () => {
+  await load({ scroll: true }).catch((err) => (error.value = err.message))
+  live.lastUpdated.value = new Date()
+  clockTimer = setInterval(() => (nowTick.value = Date.now()), 1000)
 })
+onUnmounted(() => clearInterval(clockTimer))
 </script>
 
 <template>
   <div class="card chat">
     <div class="card-header">
       <h2>League chat</h2>
-      <span class="tiny faint">{{ messages.length }} messages</span>
+      <div class="row">
+        <span class="tiny faint">{{ updatedLabel }}</span>
+        <button
+          class="btn btn-ghost btn-sm refresh"
+          :class="{ spinning: live.refreshing.value }"
+          title="Refresh now"
+          :disabled="live.refreshing.value"
+          @click="live.refresh()"
+        >
+          ↻
+        </button>
+      </div>
     </div>
 
     <div ref="scroller" class="stream">
@@ -273,6 +288,16 @@ watch(() => props.pollMs, (ms) => {
 }
 .ev-phase {
   color: var(--warn);
+}
+
+.refresh {
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+}
+
+.refresh.spinning {
+  animation: spin 0.7s linear infinite;
 }
 
 .composer {

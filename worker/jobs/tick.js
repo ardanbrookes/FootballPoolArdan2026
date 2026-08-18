@@ -61,6 +61,14 @@ export async function runTick({ force = null } = {}) {
     )
     if (announced.posted) ran.push({ leagueId: league.id, job: 'phase-announce', phase: announced.phase })
 
+    // The weekly cycle doesn't exist before the season starts. Running it would
+    // close the free agent pool and process waivers in August, which is exactly
+    // the confusion this guard removes.
+    if (lockState.preseason) {
+      ran.push({ leagueId: league.id, job: 'skipped-preseason' })
+      continue
+    }
+
     // Chronological order within the cycle, so a league catching up after an
     // outage replays the boundaries in the order they actually happened.
     const closeKey = `tick:pool-close:${league.id}`

@@ -1,7 +1,6 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useSessionStore, useLeagueStore } from '@/stores/league.js'
-import DeadlineTimer from '@/components/DeadlineTimer.vue'
 
 const session = useSessionStore()
 const league = useLeagueStore()
@@ -42,6 +41,51 @@ const navItems = [
 ]
 
 const deadline = computed(() => league.lockState?.nextDeadline)
+
+/**
+ * Live countdown to the next deadline.
+ *
+ * Ticks locally rather than re-fetching, and asks the store to re-check the
+ * phase once it reaches zero — the phase change happens server-side, so the
+ * clock hitting 00:00 is the cue to go and confirm it.
+ */
+const nowTick = ref(Date.now())
+let clockTimer
+
+const countdown = computed(() => {
+  const at = deadline.value?.at
+  if (!at) return ''
+  const remaining = Math.max(0, Date.parse(at) - nowTick.value)
+  if (remaining === 0) return 'now'
+
+  const total = Math.floor(remaining / 1000)
+  const days = Math.floor(total / 86400)
+  const hours = Math.floor((total % 86400) / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  const pad = (n) => String(n).padStart(2, '0')
+
+  return days ? `${days}d ${pad(hours)}:${pad(minutes)}` : `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+})
+
+/** Under three hours reads as urgent — that's when people miss deadlines. */
+const urgent = computed(() => {
+  const at = deadline.value?.at
+  if (!at) return false
+  const remaining = Date.parse(at) - nowTick.value
+  return remaining > 0 && remaining < 3 * 3600 * 1000
+})
+
+onMounted(() => {
+  clockTimer = setInterval(() => {
+    const before = nowTick.value
+    nowTick.value = Date.now()
+    // Crossed the deadline: the server decides the new phase, so go and ask.
+    const at = deadline.value?.at
+    if (at && Date.parse(at) > before && Date.parse(at) <= nowTick.value) league.refreshLocks()
+  }, 1000)
+})
+onUnmounted(() => clearInterval(clockTimer))
 </script>
 
 <template>
@@ -86,7 +130,19 @@ const deadline = computed(() => league.lockState?.nextDeadline)
         </div>
 
         <div class="topbar-right">
-          <DeadlineTimer v-if="deadline" :deadline="deadline" compact @elapsed="league.refreshLocks()" />
+          <!-- What phase we're in and exactly when it changes. Applies to every
+               page, so it belongs here rather than on Home. -->
+          <div v-if="league.lockState" class="phase-block">
+            <div class="phase-row">
+              <span class="phase-name" :class="`phase-${league.lockState.phase}`">
+                {{ league.lockState.phaseLabel }}
+              </span>
+              <span v-if="deadline" class="countdown mono" :class="{ urgent }">{{ countdown }}</span>
+            </div>
+            <div v-if="deadline" class="tiny faint phase-until">
+              {{ deadline.title }} · {{ deadline.label }}
+            </div>
+          </div>
           <button class="btn btn-ghost btn-sm" @click="signOut">Sign out</button>
         </div>
       </div>
@@ -173,6 +229,58 @@ const deadline = computed(() => league.lockState?.nextDeadline)
   flex-shrink: 0;
 }
 
+.phase-block {
+  text-align: right;
+  min-width: 0;
+}
+
+.phase-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.countdown {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.countdown.urgent {
+  color: var(--warn);
+}
+
+.phase-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+  color: var(--text-muted);
+}
+
+/* Colour carries the same meaning as the Acquisitions banner: green means you
+   can move players, amber means partially, red means frozen. */
+.phase-name.phase-open,
+.phase-name.phase-preseason {
+  color: var(--accent-hover);
+}
+
+.phase-name.phase-early_game_lock,
+.phase-name.phase-waiver_period {
+  color: var(--warn);
+}
+
+.phase-name.phase-blanket_lock {
+  color: var(--danger);
+}
+
+.phase-until {
+  white-space: nowrap;
+}
+
 .nav {
   border-top: 1px solid var(--border);
   overflow-x: auto;
@@ -208,8 +316,25 @@ const deadline = computed(() => league.lockState?.nextDeadline)
 }
 
 @media (max-width: 620px) {
-  .topbar-right :deep(.timer) {
+  /* Keep the phase name and the countdown on a phone — between them they say
+     what you can do and how long you have. The full changeover date doesn't
+     fit alongside, and is available on Acquisitions anyway. */
+  .phase-until {
     display: none;
+  }
+
+  .phase-name {
+    font-size: 0.65rem;
+  }
+
+  .countdown {
+    font-size: 0.85rem;
+  }
+
+  .phase-row {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
   }
 }
 </style>

@@ -4,6 +4,7 @@
  * and see what's been accepted around the league.
  */
 import { ref, computed, onMounted, watch } from 'vue'
+import { useLive } from '@/composables/useLive.js'
 import api from '@/api/client.js'
 import { useLeagueStore } from '@/stores/league.js'
 import PlayerChip from '@/components/PlayerChip.vue'
@@ -171,6 +172,25 @@ const canSubmit = computed(
       receivePicks.value.length) &&
     !busy.value &&
     league.allows.trade,
+)
+
+/**
+ * Poll for incoming offers.
+ *
+ * Skipped while an offer is being built or sent — a refresh mid-build would
+ * reload the rosters underneath the selections and lose them.
+ */
+const live = useLive(
+  async () => {
+    const building =
+      give.value.length ||
+      receive.value.length ||
+      givePicks.value.length ||
+      receivePicks.value.length
+    if (busy.value || building) return
+    await loadAll()
+  },
+  { intervalMs: 25000, immediate: false },
 )
 
 onMounted(loadAll)
@@ -388,10 +408,22 @@ onMounted(loadAll)
             <div>
               <div class="tiny faint">{{ trade.proposer_abbr }} sent</div>
               <div v-for="p in trade.proposerGives" :key="p.id" class="small">{{ p.full_name }}</div>
+              <div v-for="p in trade.proposerPicks" :key="`p${p.id}`" class="small pick-note">
+                {{ p.season }} Round {{ p.round }} pick
+              </div>
+              <div v-if="!trade.proposerGives.length && !trade.proposerPicks.length" class="tiny faint">
+                nothing
+              </div>
             </div>
             <div>
               <div class="tiny faint">{{ trade.receiver_abbr }} sent</div>
               <div v-for="p in trade.receiverGives" :key="p.id" class="small">{{ p.full_name }}</div>
+              <div v-for="p in trade.receiverPicks" :key="`p${p.id}`" class="small pick-note">
+                {{ p.season }} Round {{ p.round }} pick
+              </div>
+              <div v-if="!trade.receiverGives.length && !trade.receiverPicks.length" class="tiny faint">
+                nothing
+              </div>
             </div>
           </div>
         </div>
