@@ -45,3 +45,7 @@ service-account*.json
 *.njsproj
 *.sln
 *.sw?
+
+# Manager setup file — holds real passwords
+managers.json
+sleeper-map.json

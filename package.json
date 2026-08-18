@@ -24,7 +24,8 @@
     "seed:remote": "node scripts/admin.mjs seed --force --remote",
     "tick:local": "node scripts/admin.mjs tick",
     "waivers:local": "node scripts/admin.mjs waivers/process",
-    "import:sleeper": "node scripts/import-sleeper.mjs"
+    "import:sleeper": "node scripts/import-sleeper.mjs",
+    "managers": "node scripts/managers.mjs"
   },
   "dependencies": {
     "hono": "^4.13.2",

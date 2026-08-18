@@ -113,6 +113,110 @@ GET /api/league/lock-state?at=2026-09-17T21:00:00
 
 ---
 
+## Draft night runbook
+
+The plan: draft on Sleeper, then import once and run the season here.
+
+Every command needs the admin token in the current PowerShell window. It does
+not persist — set it again in a new one:
+
+```bash
+$env:ADMIN_TOKEN = "your-token-here"
+```
+
+### A week before — set the Sleeper league up to match
+
+Do this in Sleeper's own settings, before drafting. The import moves players
+only; it never changes our scoring or roster rules, so anything that disagrees
+has to be reconciled by hand afterwards.
+
+| Setting | Must be |
+| --- | --- |
+| Teams | 8 |
+| Starters | QB, RB, RB, WR, WR, TE, FLEX, D/ST, K |
+| Bench | 7 |
+| IR slots | 1 |
+| Reception points | 0.5 (half PPR) |
+
+### A week before — set up the managers
+
+**This is the step that makes draft night one command.** The importer matches
+people by display name, so set each manager's display name here to the name they
+use on Sleeper.
+
+```bash
+npm run managers -- --template
+```
+
+Edit `managers.json`: `displayName` = their Sleeper name, `username` = what they
+type to log in here, `password` = theirs. Leave a field blank to keep it as is.
+Then preview and apply:
+
+```bash
+npm run managers -- --apply
+```
+
+```bash
+npm run managers -- --apply --commit
+```
+
+`managers.json` holds real passwords and is gitignored. Delete it once everyone
+has signed in.
+
+### A week before — rehearse
+
+The league exists on Sleeper before the draft does, so the whole import can be
+rehearsed with real data. Find the league id from your username:
+
+```bash
+npm run import:sleeper -- --user <your-sleeper-username>
+```
+
+Then dry-run it. Nothing is written:
+
+```bash
+npm run import:sleeper -- --league <league-id>
+```
+
+You are looking for **Managers matched: 8** and no `DIFF` rows. Anyone unmatched
+is either a display-name mismatch (fix it in `managers.json`) or someone who can
+be placed by hand with `--map`, which accepts a Sleeper display name, username or
+user id:
+
+```bash
+npm run import:sleeper -- --league <league-id> --map Blake=1,Young3Buck=2
+```
+
+### Draft night — import
+
+Dry run once more, because rosters have changed since the rehearsal:
+
+```bash
+npm run import:sleeper -- --league <league-id>
+```
+
+Then commit. This **replaces every roster** in the league:
+
+```bash
+npm run import:sleeper -- --league <league-id> --commit --team-names
+```
+
+Drop `--team-names` to keep the names you set in `managers.json` instead of the
+ones people picked on Sleeper.
+
+### Afterwards
+
+- Undrafted players are **free agents**, not waivers — first come, first served
+  until the first Sunday lock. Nobody has to wait for Tuesday.
+- Open the League tab and check all 8 rosters look right.
+- Anyone over the 16-player limit (only possible if the Sleeper league had deeper
+  benches) must drop down before the first lock. The import never drops a pick on
+  someone's behalf.
+- The import is **not** a running sync. Sleeper has no TSLC waivers, no Monday
+  reset and no Thursday partial lock, so from here on this site is the record.
+
+---
+
 ## Deploying to Cloudflare
 
 ```bash

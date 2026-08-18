@@ -14,9 +14,15 @@ import { runWaiverProcessing, runWeekReset, runStatsRefresh, runDailySync } from
 import { syncPlayers, getSyncLog } from '../services/sleeper.js'
 import { importSleeperLeague } from '../services/sleeper-import.js'
 import { syncSeason } from '../services/schedule.js'
+import { listManagers, applyManagers } from '../services/managers.js'
 import { get, query } from '../db.js'
 
 const router = new Hono()
+
+/** Explicit ?leagueId wins; otherwise the only league there is. */
+const resolveLeague = async (c) =>
+  (await get('SELECT id FROM leagues WHERE id = @id', { id: Number(c.req.query('leagueId')) || 0 })) ||
+  (await get('SELECT id FROM leagues ORDER BY id ASC LIMIT 1'))
 
 // Routine operations: signed-in commissioner is enough.
 router.use('/tick', requireAdminOrCommissioner)
@@ -32,6 +38,8 @@ router.use('/seed', requireAdminToken)
 // A committed import replaces every roster in the league, so it needs the token
 // rather than just a commissioner session — same bar as seeding.
 router.use('/import/*', requireAdminToken)
+// Manager setup can change passwords, so it sits at the same bar.
+router.use('/managers', requireAdminToken)
 
 /** Build the demo league. Pass ?force=1 to wipe an existing one first. */
 router.post('/seed', async (c) => {
@@ -105,6 +113,28 @@ router.post('/import/sleeper', async (c) => {
       commit: body.commit === true,
       payload: body.payload || null,
     }),
+  )
+})
+
+/**
+ * Manager setup — logins, display names and team names.
+ *
+ * Token-gated rather than commissioner-gated: it can change passwords, so it
+ * sits at the same bar as seeding and importing.
+ */
+router.get('/managers', async (c) => {
+  const league = await resolveLeague(c)
+  if (!league) return c.json({ error: 'No league exists.' }, 404)
+  return c.json({ leagueId: league.id, managers: await listManagers(league.id) })
+})
+
+/** Body: { managers: [{ teamId, teamName?, abbreviation?, username?, displayName?, password? }], commit } */
+router.post('/managers', async (c) => {
+  const body = c.get('body') || {}
+  const league = await resolveLeague(c)
+  if (!league) return c.json({ error: 'No league exists.' }, 404)
+  return c.json(
+    await applyManagers(league.id, body.managers || [], { dryRun: body.commit !== true }),
   )
 })
 

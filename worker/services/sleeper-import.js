@@ -75,7 +75,13 @@ function matchManagers(sleeperUsers, ourTeams, overrides = {}) {
   const unmatched = []
 
   for (const user of sleeperUsers) {
-    const forced = overrides[user.user_id]
+    // Overrides can be keyed by Sleeper user id, username or display name.
+    // The ids are 18 digits and have to be copied by hand, so allowing names
+    // makes a hand-written mapping something you can actually read back.
+    const forced =
+      overrides[user.user_id] ??
+      overrides[norm(user.username)] ??
+      overrides[norm(user.display_name)]
     if (forced != null) {
       const team = available.get(Number(forced))
       if (team) {
@@ -256,8 +262,12 @@ export async function importSleeperLeague({
     const onIr = present.filter((id) => reserve.has(id))
 
     if (active.length > rosterConfig.maxPlayers) {
+      // Imported anyway rather than truncated: dropping someone's pick to fit a
+      // limit would be a silent, unrecoverable decision made on their behalf.
+      // Usually this just means the Sleeper league has deeper benches than ours.
       warnings.push(
-        `${team.name} would have ${active.length} active players, over the ${rosterConfig.maxPlayers} limit.`,
+        `${team.name} would have ${active.length} active players, over the ${rosterConfig.maxPlayers} limit. ` +
+          'All of them import; the manager must drop down to the limit before the first lock.',
       )
     }
     if (onIr.length > rosterConfig.irSlots) {
