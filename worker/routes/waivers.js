@@ -48,7 +48,7 @@ router.get('/results', async (c) =>
 router.post('/claims', requireTeam, async (c) => {
   const league = c.get('league')
   const team = c.get('team')
-  const { addPlayerId, dropPlayerId = null, priority } = c.get('body') || {}
+  const { addPlayerId, dropPlayerId = null, priority, toIr = false } = c.get('body') || {}
   if (!addPlayerId) return c.json({ error: 'addPlayerId is required.' }, 400)
 
   const claim = await submitClaim({
@@ -59,6 +59,7 @@ router.post('/claims', requireTeam, async (c) => {
     addPlayerId: String(addPlayerId),
     dropPlayerId: dropPlayerId ? String(dropPlayerId) : null,
     priority: priority ? Number(priority) : undefined,
+    toIr: toIr === true,
   })
 
   return c.json({ claim, claims: await getPendingClaims(league.id, team.id) }, 201)

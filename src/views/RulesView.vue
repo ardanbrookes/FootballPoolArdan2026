@@ -121,6 +121,12 @@ const scoringGroups = computed(() => {
             qualify; Questionable isn't enough, or IR would just be a free extra bench spot. Activating
             someone needs an open roster spot, so you may have to drop a player first.
           </p>
+          <p class="small muted" style="margin: 0.5rem 0 0">
+            You can also sign or claim an injured free agent
+            <strong>straight onto IR</strong>, even with a full roster — they never occupy an active
+            spot, so nobody has to be dropped. If a waiver claim was made this way and the player is
+            activated before waivers run, the claim fails rather than quietly taking a roster spot.
+          </p>
         </div>
       </div>
     </div>

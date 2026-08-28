@@ -56,8 +56,8 @@ export const api = {
   // My team
   roster: (week, teamId) => request('GET', `/league/roster${qs({ week, teamId })}`),
   setLineup: (assignments, week) => request('PUT', '/league/lineup', { assignments, week }),
-  addFreeAgent: (addPlayerId, dropPlayerId) =>
-    request('POST', '/league/free-agents/add', { addPlayerId, dropPlayerId }),
+  addFreeAgent: (addPlayerId, dropPlayerId, toIr = false) =>
+    request('POST', '/league/free-agents/add', { addPlayerId, dropPlayerId, toIr }),
   dropPlayer: (playerId) => request('POST', '/league/drop', { playerId }),
   placeOnIr: (playerId) => request('POST', '/league/ir/place', { playerId }),
   activateFromIr: (playerId) => request('POST', '/league/ir/activate', { playerId }),
@@ -77,8 +77,8 @@ export const api = {
 
   // Waivers
   claims: (mine = true) => request('GET', `/league/waivers/claims${qs({ mine: mine ? 1 : 0 })}`),
-  submitClaim: (addPlayerId, dropPlayerId) =>
-    request('POST', '/league/waivers/claims', { addPlayerId, dropPlayerId }),
+  submitClaim: (addPlayerId, dropPlayerId, toIr = false) =>
+    request('POST', '/league/waivers/claims', { addPlayerId, dropPlayerId, toIr }),
   cancelClaim: (claimId) => request('DELETE', `/league/waivers/claims/${claimId}`),
   reorderClaims: (claimIds) => request('PUT', '/league/waivers/claims/order', { claimIds }),
   waiverResults: (params) => request('GET', `/league/waivers/results${qs(params)}`),

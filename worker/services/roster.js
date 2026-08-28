@@ -289,6 +289,7 @@ export function acquisitionStatements({
   source = 'free_agent',
   notes = null,
   dropClearAt,
+  toIr = false,
 }) {
   const writes = []
 
@@ -315,9 +316,9 @@ export function acquisitionStatements({
 
   writes.push(
     stmt(
-      `INSERT INTO roster_players (league_id, team_id, player_id, acquired_via)
-       VALUES (@leagueId, @teamId, @playerId, @source)`,
-      { leagueId, teamId, playerId: addPlayerId, source },
+      `INSERT INTO roster_players (league_id, team_id, player_id, acquired_via, on_ir)
+       VALUES (@leagueId, @teamId, @playerId, @source, @onIr)`,
+      { leagueId, teamId, playerId: addPlayerId, source, onIr: toIr ? 1 : 0 },
     ),
     poolStatements.clearWaiverState(leagueId, addPlayerId),
     stmt(
@@ -331,7 +332,15 @@ export function acquisitionStatements({
 }
 
 /** Free-agent pickup, with every rule enforced. */
-export async function addFreeAgent({ leagueId, teamId, season, week, addPlayerId, dropPlayerId = null }) {
+export async function addFreeAgent({
+  leagueId,
+  teamId,
+  season,
+  week,
+  addPlayerId,
+  dropPlayerId = null,
+  toIr = false,
+}) {
   const locks = await getLockState(leagueId)
   assertAllowed(
     locks,
@@ -351,6 +360,25 @@ export async function addFreeAgent({ leagueId, teamId, season, week, addPlayerId
   }
   assertPlayerMovable(locks, target, 'add')
 
+  // Signing someone straight onto IR. They never occupy an active spot, so a
+  // full roster is no obstacle — the only limit that applies is the IR slot.
+  if (toIr) {
+    if (!isIrEligible(target)) {
+      throw httpError(
+        `${target.full_name} doesn't qualify for IR (${target.injury_status || 'no injury designation'}).`,
+        409,
+        'NOT_IR_ELIGIBLE',
+      )
+    }
+    if ((await getIrCount(leagueId, teamId)) >= rosterConfig.irSlots) {
+      throw httpError(
+        `Your ${rosterConfig.irSlots === 1 ? 'IR slot is' : 'IR slots are'} full.`,
+        409,
+        'IR_FULL',
+      )
+    }
+  }
+
   if (dropPlayerId) {
     const dropping = await get(
       `SELECT p.* FROM roster_players rp JOIN players p ON p.id = rp.player_id
@@ -359,7 +387,7 @@ export async function addFreeAgent({ leagueId, teamId, season, week, addPlayerId
     )
     if (!dropping) throw httpError('The player you want to drop is not on your roster.', 400)
     assertPlayerMovable(locks, dropping, 'drop')
-  } else if ((await getRosterCount(leagueId, teamId)) >= rosterConfig.maxPlayers) {
+  } else if (!toIr && (await getRosterCount(leagueId, teamId)) >= rosterConfig.maxPlayers) {
     throw httpError(
       `Your roster is full (${rosterConfig.maxPlayers}). Choose a player to drop.`,
       409,
@@ -382,19 +410,21 @@ export async function addFreeAgent({ leagueId, teamId, season, week, addPlayerId
       dropPlayerId,
       source: 'free_agent',
       dropClearAt: await nextWaiverClearTime(leagueId),
+      toIr,
     }),
     systemMessageStatement({
       leagueId,
       teamId,
-      eventType: 'add',
+      eventType: toIr ? 'ir' : 'add',
       body:
         `${team?.name ?? 'A team'} signed ${target.full_name}` +
+        (toIr ? ' straight to IR' : '') +
         (dropped ? `, dropping ${dropped.full_name}.` : '.'),
-      meta: { addPlayerId, dropPlayerId, source: 'free_agent' },
+      meta: { addPlayerId, dropPlayerId, source: 'free_agent', toIr },
     }),
   ])
 
-  return { addPlayerId, dropPlayerId }
+  return { addPlayerId, dropPlayerId, toIr }
 }
 
 /** Drop a player to waivers. */

@@ -9,6 +9,7 @@ import {
   placeOnIr,
   activateFromIr,
   swapIr,
+  isIrEligible,
 } from '../services/roster.js'
 import { getLockState } from '../services/locks.js'
 import { searchPlayers, getPlayerWithAvailability, setWatchlist } from '../services/players.js'
@@ -43,6 +44,10 @@ router.get('/players', async (c) => {
       ...p,
       watched: Boolean(p.watched),
       projectedPoints: projections.get(p.id) ?? null,
+      // Decided here rather than in the browser so the eligible-status list
+      // stays in config and can't drift out of step with what the server
+      // will actually accept.
+      irEligible: isIrEligible(p),
     })),
   })
 })
@@ -104,7 +109,7 @@ router.put('/lineup', requireTeam, async (c) => {
 router.post('/free-agents/add', requireTeam, async (c) => {
   const league = c.get('league')
   const team = c.get('team')
-  const { addPlayerId, dropPlayerId = null } = c.get('body') || {}
+  const { addPlayerId, dropPlayerId = null, toIr = false } = c.get('body') || {}
   if (!addPlayerId) return c.json({ error: 'addPlayerId is required.' }, 400)
 
   const result = await addFreeAgent({
@@ -114,6 +119,7 @@ router.post('/free-agents/add', requireTeam, async (c) => {
     week: league.current_week,
     addPlayerId: String(addPlayerId),
     dropPlayerId: dropPlayerId ? String(dropPlayerId) : null,
+    toIr: toIr === true,
   })
 
   return c.json(

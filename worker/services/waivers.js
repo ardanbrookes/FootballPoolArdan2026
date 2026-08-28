@@ -26,7 +26,7 @@
 import { get, query, run, batch, stmt, nowIso } from '../db.js'
 import { roster as rosterConfig } from '../config.js'
 import { getWaiverConfig } from './settings.js'
-import { acquisitionStatements, getRosterCount } from './roster.js'
+import { acquisitionStatements, getRosterCount, isIrEligible } from './roster.js'
 import { AVAILABILITY, getPlayerWithAvailability, nextWaiverClearTime, statements as poolStatements } from './players.js'
 
 export const CLAIM_STATUS = {
@@ -68,6 +68,7 @@ export function getWaiverOrder(leagueId) {
 export function getPendingClaims(leagueId, teamId = null) {
   const sql = `
     SELECT c.*, ap.full_name AS add_player_name, ap.position AS add_position, ap.nfl_team AS add_nfl_team,
+           ap.injury_status AS add_injury_status,
            dp.full_name AS drop_player_name, dp.position AS drop_position,
            t.name AS team_name, t.abbreviation AS team_abbr
       FROM waiver_claims c
@@ -94,7 +95,7 @@ export function getWaiverResults(leagueId, { season, week, limit = 100 } = {}) {
   }
 
   return query(
-    `SELECT c.id, c.team_id, c.season, c.week, c.priority, c.status, c.result_reason, c.processed_at,
+    `SELECT c.id, c.team_id, c.season, c.week, c.priority, c.status, c.result_reason, c.processed_at, c.to_ir,
             ap.full_name AS add_player_name, ap.position AS add_position, ap.nfl_team AS add_nfl_team,
             dp.full_name AS drop_player_name,
             t.name AS team_name, t.abbreviation AS team_abbr
@@ -110,7 +111,16 @@ export function getWaiverResults(leagueId, { season, week, limit = 100 } = {}) {
 }
 
 /** Queue a claim. Priority defaults to the end of this team's list. */
-export async function submitClaim({ leagueId, teamId, season, week, addPlayerId, dropPlayerId = null, priority }) {
+export async function submitClaim({
+  leagueId,
+  teamId,
+  season,
+  week,
+  addPlayerId,
+  dropPlayerId = null,
+  priority,
+  toIr = false,
+}) {
   const config = await getWaiverConfig(leagueId)
 
   const target = await getPlayerWithAvailability(leagueId, addPlayerId)
@@ -141,7 +151,7 @@ export async function submitClaim({ leagueId, teamId, season, week, addPlayerId,
       { leagueId, teamId, playerId: dropPlayerId },
     )
     if (!owned) throw httpError('The drop candidate is not on your roster.', 400)
-  } else if ((await getRosterCount(leagueId, teamId)) >= rosterConfig.maxPlayers) {
+  } else if (!toIr && (await getRosterCount(leagueId, teamId)) >= rosterConfig.maxPlayers) {
     throw httpError(
       `Your roster is full (${rosterConfig.maxPlayers}) — every claim needs a drop candidate.`,
       409,
@@ -149,10 +159,29 @@ export async function submitClaim({ leagueId, teamId, season, week, addPlayerId,
     )
   }
 
+  // Claiming straight onto IR. Eligibility is checked again at processing time,
+  // because a player can be activated between submitting and Tuesday morning.
+  if (toIr && !isIrEligible(target)) {
+    throw httpError(
+      `${target.full_name} doesn't qualify for IR (${target.injury_status || 'no injury designation'}).`,
+      409,
+      'NOT_IR_ELIGIBLE',
+    )
+  }
+
   const result = await run(
-    `INSERT INTO waiver_claims (league_id, team_id, season, week, add_player_id, drop_player_id, priority)
-     VALUES (@leagueId, @teamId, @season, @week, @addPlayerId, @dropPlayerId, @priority)`,
-    { leagueId, teamId, season, week, addPlayerId, dropPlayerId, priority: priority ?? pendingCount + 1 },
+    `INSERT INTO waiver_claims (league_id, team_id, season, week, add_player_id, drop_player_id, priority, to_ir)
+     VALUES (@leagueId, @teamId, @season, @week, @addPlayerId, @dropPlayerId, @priority, @toIr)`,
+    {
+      leagueId,
+      teamId,
+      season,
+      week,
+      addPlayerId,
+      dropPlayerId,
+      priority: priority ?? pendingCount + 1,
+      toIr: toIr ? 1 : 0,
+    },
   )
 
   return get('SELECT * FROM waiver_claims WHERE id = @id', { id: result.lastInsertRowid })
@@ -233,6 +262,17 @@ export async function processWaivers(leagueId, { dryRun = false } = {}) {
     ).map((r) => [r.team_id, r.count]),
   )
 
+  // Tracked alongside the active count so a run can't overfill the IR either.
+  const irCounts = new Map(
+    (
+      await query(
+        `SELECT team_id, COUNT(*) AS count FROM roster_players
+          WHERE league_id = @leagueId AND on_ir = 1 GROUP BY team_id`,
+        { leagueId },
+      )
+    ).map((r) => [r.team_id, r.count]),
+  )
+
   const tslc = new Map(startingOrder.map((t) => [t.id, t.last_waiver_claim_at]))
   const teamMeta = new Map(startingOrder.map((t) => [t.id, t]))
 
@@ -306,8 +346,28 @@ export async function processWaivers(leagueId, { dryRun = false } = {}) {
       continue
     }
 
+    const toIr = Boolean(claim.to_ir)
+
+    if (toIr) {
+      // Re-checked here rather than trusted from submission time: a player can
+      // be activated between Saturday night and Tuesday morning, and quietly
+      // parking a healthy player on IR would be a free extra roster spot.
+      if (!isIrEligible({ injury_status: claim.add_injury_status })) {
+        resolve(
+          claim,
+          CLAIM_STATUS.FAILED,
+          'No longer IR-eligible — they were activated before waivers ran.',
+        )
+        continue
+      }
+      if ((irCounts.get(teamId) ?? 0) >= rosterConfig.irSlots) {
+        resolve(claim, CLAIM_STATUS.FAILED, 'Your IR slot was already full.')
+        continue
+      }
+    }
+
     const count = rosterCounts.get(teamId) ?? 0
-    if (!claim.drop_player_id && count >= rosterConfig.maxPlayers) {
+    if (!toIr && !claim.drop_player_id && count >= rosterConfig.maxPlayers) {
       resolve(claim, CLAIM_STATUS.FAILED, 'Roster full and no drop candidate was set.')
       continue
     }
@@ -322,14 +382,21 @@ export async function processWaivers(leagueId, { dryRun = false } = {}) {
         addPlayerId: claim.add_player_id,
         dropPlayerId: claim.drop_player_id,
         source: 'waiver',
-        notes: `Waiver claim #${claim.priority}`,
+        notes: `Waiver claim #${claim.priority}${toIr ? ' (to IR)' : ''}`,
         dropClearAt,
+        toIr,
       }),
     )
 
     ownership.set(claim.add_player_id, teamId)
     if (claim.drop_player_id) ownership.delete(claim.drop_player_id)
-    rosterCounts.set(teamId, count + (claim.drop_player_id ? 0 : 1))
+    // An IR arrival never touches the active count; a drop still frees a spot.
+    if (toIr) {
+      irCounts.set(teamId, (irCounts.get(teamId) ?? 0) + 1)
+      if (claim.drop_player_id) rosterCounts.set(teamId, count - 1)
+    } else {
+      rosterCounts.set(teamId, count + (claim.drop_player_id ? 0 : 1))
+    }
 
     const stamp = nowIso()
     if (config.resetPriorityOnWin) {

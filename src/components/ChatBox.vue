@@ -5,12 +5,15 @@
  * People's messages and the league's own events share one stream, so a waiver
  * claim and the gloating about it sit next to each other.
  *
- * GIFs: a pasted Tenor/Giphy/image link renders inline. That covers the usual
- * "paste a reaction gif" flow without needing an API key or a picker UI.
+ * GIFs come from a picker backed by a fixed pack (see data/gifs.js). Pasting a
+ * link used to be the mechanism, but a Tenor or Giphy share link is a web page
+ * rather than an image, so the usual copy-from-the-app flow posted bare text
+ * and nothing ever appeared.
  */
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import api from '@/api/client.js'
 import { useLive, agoLabel } from '@/composables/useLive.js'
+import { gifCategories, stillUrl, animatedUrl, GIF_URL_RE } from '@/data/gifs.js'
 
 const props = defineProps({
   /** Poll interval in ms. Chat is the one thing people watch, so it's brisk. */
@@ -27,16 +30,50 @@ const scroller = ref(null)
 const nowTick = ref(Date.now())
 let clockTimer
 
-/** Direct image/GIF links render inline; everything else stays text. */
-const IMAGE_RE = /https?:\/\/\S+\.(?:gif|gifv|png|jpe?g|webp)(?:\?\S*)?/i
-/** Tenor and Giphy share pages aren't direct links, so offer them as a link out. */
-const GIF_PAGE_RE = /https?:\/\/(?:\w+\.)?(?:tenor\.com|giphy\.com)\/\S+/i
-
+/**
+ * A message is either a GIF from the picker or plain text.
+ *
+ * Only URLs the picker itself produces render as images — arbitrary pasted
+ * links stay as text, so nobody can drop a surprise image into the feed.
+ */
 function parse(body) {
-  const image = body.match(IMAGE_RE)?.[0] ?? null
-  const gifPage = !image ? (body.match(GIF_PAGE_RE)?.[0] ?? null) : null
-  const text = body.replace(image ?? gifPage ?? '', '').trim()
-  return { text, image, gifPage }
+  const trimmed = (body || '').trim()
+  if (GIF_URL_RE.test(trimmed)) return { text: '', gif: trimmed }
+  return { text: body, gif: null }
+}
+
+const pickerOpen = ref(false)
+const gifSearch = ref('')
+
+const visibleGifs = computed(() => {
+  const term = gifSearch.value.trim().toLowerCase()
+  if (!term) return gifCategories
+  return gifCategories.filter((c) => c.label.toLowerCase().includes(term))
+})
+
+async function sendGif(id) {
+  pickerOpen.value = false
+  gifSearch.value = ''
+  sending.value = true
+  error.value = null
+  try {
+    // Posted as its own message rather than appended to the draft, so a GIF is
+    // always a whole reaction and never half a sentence.
+    await api.postChat(animatedUrl(id))
+    await load({ scroll: true })
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    sending.value = false
+  }
+}
+
+/** Clicking away or pressing Escape closes the picker. */
+function onDocClick(event) {
+  if (!event.target.closest?.('.gif-area')) pickerOpen.value = false
+}
+function onKey(event) {
+  if (event.key === 'Escape') pickerOpen.value = false
 }
 
 const EVENT_ICON = {
@@ -110,8 +147,14 @@ onMounted(async () => {
   await load({ scroll: true }).catch((err) => (error.value = err.message))
   live.lastUpdated.value = new Date()
   clockTimer = setInterval(() => (nowTick.value = Date.now()), 1000)
+  document.addEventListener('click', onDocClick)
+  document.addEventListener('keydown', onKey)
 })
-onUnmounted(() => clearInterval(clockTimer))
+onUnmounted(() => {
+  clearInterval(clockTimer)
+  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('keydown', onKey)
+})
 </script>
 
 <template>
@@ -157,21 +200,11 @@ onUnmounted(() => clearInterval(clockTimer))
           <div class="msg-body small">
             <span v-if="parse(item.body).text">{{ parse(item.body).text }}</span>
             <img
-              v-if="parse(item.body).image"
-              :src="parse(item.body).image"
-              alt=""
+              v-if="parse(item.body).gif"
+              :src="parse(item.body).gif"
+              alt="GIF"
               class="msg-gif"
-              loading="lazy"
             />
-            <a
-              v-else-if="parse(item.body).gifPage"
-              :href="parse(item.body).gifPage"
-              target="_blank"
-              rel="noopener"
-              class="tiny"
-            >
-              {{ parse(item.body).gifPage }} ↗
-            </a>
           </div>
         </div>
       </template>
@@ -180,12 +213,58 @@ onUnmounted(() => clearInterval(clockTimer))
     <div v-if="error" class="alert alert-error tiny" style="margin: 0 0.75rem 0.5rem">{{ error }}</div>
 
     <form class="composer" @submit.prevent="send">
-      <input
-        v-model="draft"
-        placeholder="Say something, or paste a GIF link…"
-        maxlength="1000"
-        :disabled="sending"
-      />
+      <div class="gif-area">
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm gif-toggle"
+          :class="{ on: pickerOpen }"
+          :disabled="sending"
+          :aria-expanded="pickerOpen"
+          title="Send a GIF"
+          @click="pickerOpen = !pickerOpen"
+        >
+          GIF
+        </button>
+
+        <div v-if="pickerOpen" class="picker">
+          <input
+            v-model="gifSearch"
+            class="picker-search"
+            type="search"
+            placeholder="Filter reactions…"
+            aria-label="Filter reactions"
+          />
+          <div class="picker-scroll">
+            <div v-for="cat in visibleGifs" :key="cat.label" class="picker-group">
+              <div class="tiny faint picker-label">{{ cat.label }}</div>
+              <div class="picker-grid">
+                <button
+                  v-for="id in cat.ids"
+                  :key="id"
+                  type="button"
+                  class="picker-tile"
+                  :title="cat.label"
+                  @click="sendGif(id)"
+                >
+                  <!-- Stills here, animated on send: 48 animated tiles would be
+                       ~14 MB, the stills are ~11 KB each.
+
+                       Deliberately NOT lazy. The whole grid is ~670 KB of
+                       stills, it only exists while the picker is open, and
+                       eager loading means a tile is never a blank square
+                       waiting on viewport detection. -->
+                  <img :src="stillUrl(id)" :alt="cat.label" />
+                </button>
+              </div>
+            </div>
+            <p v-if="!visibleGifs.length" class="tiny faint picker-empty">
+              Nothing matching “{{ gifSearch }}”.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <input v-model="draft" placeholder="Say something…" maxlength="1000" :disabled="sending" />
       <button class="btn btn-primary btn-sm" type="submit" :disabled="!draft.trim() || sending">
         {{ sending ? '…' : 'Send' }}
       </button>
@@ -306,5 +385,100 @@ onUnmounted(() => clearInterval(clockTimer))
   padding: 0.6rem 0.85rem;
   border-top: 1px solid var(--border);
   background: var(--bg-inset);
+}
+
+/* The composer's text input must be free to shrink, or the GIF button and Send
+   push the row wider than the card on a phone. */
+.composer input:not(.picker-search) {
+  flex: 1;
+  min-width: 0;
+}
+
+.gif-area {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.gif-toggle {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  height: 100%;
+}
+
+.gif-toggle.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+/* Opens upward — the composer sits at the bottom of the card. */
+.picker {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 30;
+  width: min(20rem, calc(100vw - 2.5rem));
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.picker-search {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg-inset);
+}
+
+.picker-scroll {
+  max-height: 17rem;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.picker-group + .picker-group {
+  margin-top: 0.5rem;
+}
+
+.picker-label {
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.picker-tile {
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+}
+
+.picker-tile:hover {
+  border-color: var(--accent);
+}
+
+.picker-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.picker-empty {
+  margin: 0.5rem 0;
+  text-align: center;
 }
 </style>

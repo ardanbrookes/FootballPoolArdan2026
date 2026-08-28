@@ -58,15 +58,32 @@ async function loadAll() {
 }
 
 function startAdd(player) {
-  picker.value = { open: true, mode: 'add', incoming: player, required: rosterFull.value }
+  picker.value = {
+    open: true,
+    mode: 'add',
+    incoming: player,
+    required: rosterFull.value && !canIr(player),
+  }
 }
 
 function startClaim(player) {
-  // A claim always names a drop candidate when the roster is full; otherwise optional.
-  picker.value = { open: true, mode: 'claim', incoming: player, required: rosterFull.value }
+  // A drop candidate is only forced when the roster is full and IR isn't open
+  // to them — an IR arrival sits outside the active limit.
+  picker.value = {
+    open: true,
+    mode: 'claim',
+    incoming: player,
+    required: rosterFull.value && !canIr(player),
+  }
 }
 
-async function confirmPicker(dropPlayerId) {
+/** Could this player go straight to IR? Mirrors the check the server makes. */
+function canIr(player) {
+  const counts = roster.value?.counts
+  return Boolean(player?.irEligible) && Boolean(counts) && counts.ir < counts.irMax
+}
+
+async function confirmPicker({ dropPlayerId, toIr }) {
   const { mode, incoming } = picker.value
   picker.value.open = false
   busyPlayerId.value = incoming.id
@@ -75,11 +92,15 @@ async function confirmPicker(dropPlayerId) {
 
   try {
     if (mode === 'add') {
-      await api.addFreeAgent(incoming.id, dropPlayerId)
-      message.value = `Added ${incoming.full_name}.`
+      await api.addFreeAgent(incoming.id, dropPlayerId, toIr)
+      message.value = toIr
+        ? `Added ${incoming.full_name} straight to IR.`
+        : `Added ${incoming.full_name}.`
     } else {
-      await api.submitClaim(incoming.id, dropPlayerId)
-      message.value = `Claim submitted for ${incoming.full_name}.`
+      await api.submitClaim(incoming.id, dropPlayerId, toIr)
+      message.value = toIr
+        ? `Claim submitted for ${incoming.full_name} — they'll land on IR if it's awarded.`
+        : `Claim submitted for ${incoming.full_name}.`
     }
     await Promise.all([loadAll(), league.refreshLocks()])
     searchRef.value?.reload()
@@ -386,6 +407,7 @@ onMounted(loadAll)
       :roster="roster"
       :mode="picker.mode"
       :required="picker.required"
+      :roster-full="rosterFull"
       :busy="Boolean(busyPlayerId)"
       @confirm="confirmPicker"
       @cancel="picker.open = false"
