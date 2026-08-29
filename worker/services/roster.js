@@ -14,6 +14,7 @@ import { get, query, batch, stmt } from '../db.js'
 import { rosterSlots, roster as rosterConfig } from '../config.js'
 import { getLockState, isPlayerLocked, assertPlayerMovable, assertAllowed, playerLockReason } from './locks.js'
 import { getWeekPoints, getWeekProjections } from './scoring.js'
+import { getTeamGameStatus } from './schedule.js'
 import { systemMessageStatement } from './chat.js'
 import {
   AVAILABILITY,
@@ -51,9 +52,14 @@ export function canPlayerFillSlot(player, slotId) {
 export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
   const locks = lockState || (await getLockState(leagueId))
 
-  const [points, projections, rostered, lineup] = await Promise.all([
+  // The NFL week actually being played, which is what decides whether a
+  // player's number should read as a score or a projection.
+  const nflWeek = locks.activeWeek ?? week
+
+  const [points, projections, games, rostered, lineup] = await Promise.all([
     getWeekPoints(season, week),
     getWeekProjections(season, week),
+    getTeamGameStatus(season, nflWeek).catch(() => new Map()),
     query(
       `SELECT p.id, p.full_name, p.position, p.fantasy_positions, p.nfl_team, p.injury_status,
               p.status, p.bye_week, p.jersey_number, rp.acquired_at, rp.acquired_via, rp.on_ir,
@@ -89,6 +95,16 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     onTradeBlock: Boolean(player.on_trade_block),
     points: points.get(player.id) ?? 0,
     projectedPoints: projections.get(player.id) ?? 0,
+    /**
+     * Has this player's game kicked off?
+     *
+     * Decides whether the UI shows what they scored or what they're projected
+     * to score. Without it every player reads 0.0 all week, which is what made
+     * the home page look broken while Acquisitions looked fine.
+     */
+    gameStarted: ['in_progress', 'final'].includes(
+      games.get(player.nfl_team)?.status ?? 'scheduled',
+    ),
     locked: isPlayerLocked(locks, player),
     lockReason: playerLockReason(locks, player),
   })

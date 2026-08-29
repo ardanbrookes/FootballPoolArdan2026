@@ -18,6 +18,11 @@ const home = computed(() => props.matchup.home)
 
 const homeLeads = computed(() => home.value.total > away.value.total)
 
+/** A number is a projection until the player's game kicks off. */
+const hasScored = (player) => ['in_progress', 'final'].includes(player?.game?.status)
+const cellPoints = (player) =>
+  hasScored(player) ? (player.points ?? 0) : (player.projectedPoints ?? 0)
+
 const winProb = computed(() => props.matchup.winProbability ?? null)
 
 /** Whichever side belongs to the viewer, so the bar reads from their point of view. */
@@ -155,13 +160,21 @@ const progress = (side) => {
         </div>
 
         <div class="pts left mono" :class="statusClass(row.away)">
-          {{ row.away ? row.away.points.toFixed(1) : '—' }}
+          <template v-if="row.away">
+            {{ cellPoints(row.away).toFixed(1) }}
+            <span v-if="!hasScored(row.away)" class="proj-tag">proj</span>
+          </template>
+          <template v-else>—</template>
         </div>
 
         <div class="slot tiny">{{ row.label }}</div>
 
         <div class="pts right mono" :class="statusClass(row.home)">
-          {{ row.home ? row.home.points.toFixed(1) : '—' }}
+          <template v-if="row.home">
+            {{ cellPoints(row.home).toFixed(1) }}
+            <span v-if="!hasScored(row.home)" class="proj-tag">proj</span>
+          </template>
+          <template v-else>—</template>
         </div>
 
         <div class="player right" :class="statusClass(row.home)">
@@ -365,6 +378,15 @@ const progress = (side) => {
     font-size: 1.35rem;
   }
 }
+.proj-tag {
+  display: block;
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  line-height: 1;
+}
+
 .winprob {
   padding: 0.6rem 0.85rem 0.75rem;
   border-bottom: 1px solid var(--border);

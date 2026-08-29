@@ -26,6 +26,29 @@ const INJURY_SHORT = {
 
 const injury = computed(() => props.player.injuryStatus || props.player.injury_status || null)
 const injuryShort = computed(() => (injury.value ? INJURY_SHORT[injury.value] ?? injury.value : null))
+
+/**
+ * A player's number is a projection until their game kicks off, and their score
+ * afterwards. Showing `points` unconditionally meant every player read 0.0 all
+ * week, which looked like the projections were broken.
+ *
+ * `gameStarted` comes from the schedule. Where it is absent (older payloads,
+ * the player pool) fall back to "has scored anything", which is right for every
+ * case except a genuine zero.
+ */
+const scored = computed(() => {
+  const p = props.player
+  if (typeof p.gameStarted === 'boolean') return p.gameStarted
+  return (p.points ?? 0) > 0
+})
+
+const shownPoints = computed(() =>
+  scored.value ? (props.player.points ?? 0) : (props.player.projectedPoints ?? 0),
+)
+
+const pointsTitle = computed(() =>
+  scored.value ? 'Points scored' : 'Projected points — their game has not started',
+)
 </script>
 
 <template>
@@ -45,7 +68,10 @@ const injuryShort = computed(() => (injury.value ? INJURY_SHORT[injury.value] ??
         <template v-if="player.byeWeek || player.bye_week">· bye {{ player.byeWeek || player.bye_week }}</template>
       </div>
     </div>
-    <div v-if="showPoints" class="chip-points mono">{{ (player.points ?? 0).toFixed(1) }}</div>
+    <div v-if="showPoints" class="chip-points mono" :class="{ proj: !scored }" :title="pointsTitle">
+      {{ shownPoints.toFixed(1) }}
+      <span v-if="!scored" class="proj-tag">proj</span>
+    </div>
   </div>
 </template>
 
@@ -103,5 +129,18 @@ const injuryShort = computed(() => (injury.value ? INJURY_SHORT[injury.value] ??
 .chip-points {
   font-weight: 600;
   font-size: 0.9rem;
+}
+.chip-points.proj {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.proj-tag {
+  display: block;
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  line-height: 1;
 }
 </style>
