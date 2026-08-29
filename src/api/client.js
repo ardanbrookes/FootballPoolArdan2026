@@ -64,6 +64,12 @@ export const api = {
   swapIr: (activatePlayerId, placePlayerId) =>
     request('POST', '/league/ir/swap', { activatePlayerId, placePlayerId }),
 
+  renameTeam: (name, abbreviation) => request('PUT', '/league/team', { name, abbreviation }),
+
+  // Trade block
+  tradeBlock: () => request('GET', '/league/trade-block'),
+  setTradeBlock: (playerId, listed) => request('POST', '/league/trade-block', { playerId, listed }),
+
   // Players
   searchPlayers: (params) => request('GET', `/league/players${qs(params)}`),
   setWatchlist: (playerId, watched) => request('POST', '/league/watchlist', { playerId, watched }),

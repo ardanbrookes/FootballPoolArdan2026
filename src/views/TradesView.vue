@@ -20,6 +20,8 @@ const give = ref([])
 const receive = ref([])
 const note = ref('')
 const busy = ref(false)
+const listings = ref([])
+const blockBusyId = ref(null)
 const message = ref(null)
 const error = ref(null)
 
@@ -52,18 +54,50 @@ const theirPlayers = computed(() => {
 async function loadAll() {
   error.value = null
   try {
-    const [rosterData, rostersData, tradeData] = await Promise.all([
+    const [rosterData, rostersData, tradeData, blockData] = await Promise.all([
       api.roster(league.currentWeek),
       api.rosters(league.currentWeek),
       api.trades({ mine: 1 }),
+      api.tradeBlock(),
     ])
     myRoster.value = rosterData.roster
     allRosters.value = rostersData.teams
     trades.value = tradeData.trades
+    listings.value = blockData.listings
   } catch (err) {
     error.value = err.message
   }
 }
+
+/**
+ * List or unlist one of your own players.
+ *
+ * Listing announces it in chat — the whole point is that the other seven
+ * managers find out. Unlisting is silent; nobody needs a notification every
+ * time somebody changes their mind.
+ */
+async function toggleBlock(player) {
+  blockBusyId.value = player.id
+  error.value = null
+  try {
+    const result = await api.setTradeBlock(player.id, !player.onTradeBlock)
+    listings.value = result.listings
+    // Reload so the roster's own flags match what the server now thinks.
+    const rosterData = await api.roster(league.currentWeek)
+    myRoster.value = rosterData.roster
+    message.value = result.listed
+      ? `${player.name} is on the trade block.`
+      : `${player.name} is off the trade block.`
+    setTimeout(() => (message.value = null), 4000)
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    blockBusyId.value = null
+  }
+}
+
+/** Listings from the other seven managers. */
+const theirListings = computed(() => listings.value.filter((l) => l.teamId !== myTeamId.value))
 
 /**
  * Add/remove a player from one side of the offer.
@@ -203,6 +237,34 @@ onMounted(loadAll)
 
     <div class="card">
       <div class="card-header">
+        <h2>Trade block</h2>
+        <span class="tiny faint">{{ listings.length }} listed</span>
+      </div>
+      <div class="card-body">
+        <p v-if="!listings.length" class="empty small" style="margin: 0">
+          Nobody has listed anyone yet. Star a player below to say you're open to moving them —
+          it gets announced in chat.
+        </p>
+        <div v-else class="block-grid">
+          <div v-for="item in listings" :key="item.teamId + ':' + item.player.id" class="listing">
+            <PlayerChip :player="item.player" />
+            <button
+              v-if="item.teamId !== myTeamId"
+              class="btn btn-ghost btn-sm"
+              type="button"
+              :disabled="!league.allows.trade"
+              @click="partnerId = item.teamId"
+            >
+              {{ item.teamName }} ↗
+            </button>
+            <span v-else class="tiny faint yours">yours</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
         <h2>Offer a trade</h2>
         <select v-model="partnerId" style="max-width: 16rem">
           <option :value="null">Choose a team…</option>
@@ -219,17 +281,31 @@ onMounted(loadAll)
           <div>
             <h3 class="small bold" style="margin-bottom: 0.5rem">You send</h3>
             <div class="picker-list">
-              <button
-                v-for="player in myPlayers"
-                :key="player.id"
-                class="pick"
-                :class="{ selected: give.includes(player.id) }"
-                :disabled="player.locked"
-                :title="player.lockReason || ''"
-                @click="toggle('give', player.id)"
-              >
-                <PlayerChip :player="player" />
-              </button>
+              <div v-for="player in myPlayers" :key="player.id" class="pick-row">
+                <button
+                  class="pick"
+                  :class="{ selected: give.includes(player.id) }"
+                  :disabled="player.locked"
+                  :title="player.lockReason || ''"
+                  @click="toggle('give', player.id)"
+                >
+                  <PlayerChip :player="player" />
+                </button>
+                <button
+                  class="block-toggle"
+                  :class="{ on: player.onTradeBlock }"
+                  type="button"
+                  :disabled="blockBusyId === player.id"
+                  :title="
+                    player.onTradeBlock
+                      ? 'On the trade block — click to remove'
+                      : 'Put on the trade block (announces it in chat)'
+                  "
+                  @click="toggleBlock(player)"
+                >
+                  {{ player.onTradeBlock ? '★' : '☆' }}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -556,5 +632,54 @@ onMounted(loadAll)
   color: var(--info);
   font-family: var(--mono);
   font-size: 0.78rem;
+}
+.pick-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem;
+  align-items: stretch;
+}
+
+.block-toggle {
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.block-toggle:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.block-toggle.on {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: 0.4rem;
+}
+
+.listing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+}
+
+.yours {
+  white-space: nowrap;
 }
 </style>

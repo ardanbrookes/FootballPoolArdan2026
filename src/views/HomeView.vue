@@ -197,6 +197,7 @@ onMounted(loadAll)
         <LineupEditor
           v-if="roster"
           :roster="roster"
+          :team="league.myTeam"
           :can-edit="league.allows.lineup"
           :saving="saving"
           :ir-busy="irBusy"
@@ -205,6 +206,7 @@ onMounted(loadAll)
           @ir-activate="activateFromIr"
           @ir-swap="swapIr"
           @dirty-change="lineupDirty = $event"
+          @renamed="loadAll()"
         />
         <div v-else-if="loading" class="card"><div class="empty">Loading roster…</div></div>
 

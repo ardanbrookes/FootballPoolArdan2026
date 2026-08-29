@@ -13,8 +13,11 @@
  */
 import { ref, computed, watch } from 'vue'
 import PlayerChip from './PlayerChip.vue'
+import TeamNameEditor from './TeamNameEditor.vue'
 
 const props = defineProps({
+  /** The signed-in manager's team, for the rename control. */
+  team: { type: Object, default: null },
   roster: { type: Object, required: true },
   canEdit: { type: Boolean, default: true },
   saving: { type: Boolean, default: false },
@@ -22,7 +25,9 @@ const props = defineProps({
   irBusy: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['save', 'ir-place', 'ir-activate', 'ir-swap', 'dirty-change'])
+const emit = defineEmits(['save', 'ir-place', 'ir-activate', 'ir-swap', 'dirty-change', 'renamed'])
+
+const teamName = computed(() => props.team?.name ?? null)
 
 const openSlot = ref(null)
 const draft = ref(null)
@@ -107,7 +112,22 @@ function save() {
   emit('save', { ...assignments.value }, reset)
 }
 
+/**
+ * Projected total for the starting lineup.
+ *
+ * Sums `projectedPoints`, not `points`. It used to sum points already scored,
+ * which meant this read 0.0 all week until games started — the Acquisitions
+ * page looked right only because it fetches projections separately.
+ *
+ * Recomputed from the live assignments rather than the server total, so
+ * swapping someone in updates the number before you save.
+ */
 const projected = computed(() =>
+  props.roster.starters.reduce((sum, s) => sum + (playerFor(s.slot)?.projectedPoints ?? 0), 0),
+)
+
+/** What the starters have actually banked so far. */
+const scored = computed(() =>
   props.roster.starters.reduce((sum, s) => sum + (playerFor(s.slot)?.points ?? 0), 0),
 )
 
@@ -157,8 +177,15 @@ function doSwap(irPlayer, incoming) {
 <template>
   <div class="card">
     <div class="card-header">
-      <h2>Your roster</h2>
-      <div class="row">
+      <div class="title-row">
+        <h2>{{ teamName || 'Your roster' }}</h2>
+        <TeamNameEditor v-if="team" :team="team" @renamed="emit('renamed', $event)" />
+      </div>
+      <div class="row totals">
+        <template v-if="scored > 0">
+          <span class="tiny faint">Scored</span>
+          <span class="mono bold">{{ scored.toFixed(1) }}</span>
+        </template>
         <span class="tiny faint">Projected</span>
         <span class="mono bold">{{ projected.toFixed(1) }}</span>
       </div>
@@ -414,5 +441,22 @@ function doSwap(irPlayer, incoming) {
   padding: 0.75rem 1rem;
   border-top: 1px solid var(--border);
   background: var(--bg-inset);
+}
+.title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.title-row h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.totals {
+  gap: 0.35rem;
 }
 </style>

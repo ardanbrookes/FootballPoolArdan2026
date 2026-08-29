@@ -12,6 +12,7 @@ import {
   isIrEligible,
 } from '../services/roster.js'
 import { getLockState } from '../services/locks.js'
+import { renameTeam, setTradeBlock, getTradeBlock } from '../services/team.js'
 import { searchPlayers, getPlayerWithAvailability, setWatchlist } from '../services/players.js'
 import { getWeekProjections } from '../services/scoring.js'
 
@@ -216,6 +217,37 @@ router.post('/drop', requireTeam, async (c) => {
   })
 
   return c.json({ ...result, roster: await getTeamRoster(league.id, team.id, league.season, league.current_week) })
+})
+
+/** Rename your own team. Body: { name, abbreviation? } */
+router.put('/team', requireTeam, async (c) => {
+  const league = c.get('league')
+  const team = c.get('team')
+  const { name, abbreviation = null } = c.get('body') || {}
+  return c.json(
+    await renameTeam({ leagueId: league.id, teamId: team.id, name, abbreviation }),
+  )
+})
+
+/** Everyone the league has listed as available. */
+router.get('/trade-block', requireUser, async (c) =>
+  c.json({ listings: await getTradeBlock(c.get('league').id) }),
+)
+
+/** List or unlist one of your own players. Body: { playerId, listed } */
+router.post('/trade-block', requireTeam, async (c) => {
+  const league = c.get('league')
+  const team = c.get('team')
+  const { playerId, listed } = c.get('body') || {}
+  if (!playerId) return c.json({ error: 'playerId is required.' }, 400)
+
+  const result = await setTradeBlock({
+    leagueId: league.id,
+    teamId: team.id,
+    playerId: String(playerId),
+    listed: listed === true,
+  })
+  return c.json({ ...result, listings: await getTradeBlock(league.id) })
 })
 
 export default router

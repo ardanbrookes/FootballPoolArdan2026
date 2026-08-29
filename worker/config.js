@@ -217,3 +217,25 @@ export const scoring = {
   pts_allow_28_34: -1,
   pts_allow_35p: -4,
 }
+
+/**
+ * How much a starter's score swings week to week, by position, in points.
+ *
+ * Used only by the win-probability model. These are rough half-PPR weekly
+ * standard deviations, not measurements from this league — a receiver who
+ * catches one deep ball is a genuinely wilder ride than a kicker, and the model
+ * only needs to know roughly by how much.
+ *
+ * Keyed on real position, so a WR in the FLEX carries WR volatility.
+ */
+export const positionVariance = {
+  QB: 7.0,
+  RB: 6.5,
+  WR: 7.0,
+  TE: 5.0,
+  K: 3.5,
+  DEF: 6.0,
+}
+
+/** Fallback for anything unrecognised. */
+export const defaultPositionSd = 6.0

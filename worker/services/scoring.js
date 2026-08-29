@@ -85,7 +85,7 @@ export async function getPlayerPoints(playerId, season, week, seasonType = 'regu
  * configured slot so empty slots are visible in the UI.
  */
 export async function getLineupWithPoints(leagueId, teamId, season, week, seasonType = 'regular') {
-  const [rows, points] = await Promise.all([
+  const [rows, points, projections] = await Promise.all([
     query(
       `SELECT l.slot, l.player_id, p.full_name, p.position, p.nfl_team, p.injury_status, p.bye_week
          FROM lineups l
@@ -95,6 +95,7 @@ export async function getLineupWithPoints(leagueId, teamId, season, week, season
       { leagueId, teamId, season, week },
     ),
     getWeekPoints(season, week, seasonType),
+    getWeekProjections(season, week, seasonType),
   ])
 
   const bySlot = new Map(rows.map((r) => [r.slot, r]))
@@ -114,6 +115,7 @@ export async function getLineupWithPoints(leagueId, teamId, season, week, season
             injuryStatus: row.injury_status,
             byeWeek: row.bye_week,
             points: points.get(row.player_id) ?? 0,
+            projectedPoints: projections.get(row.player_id) ?? 0,
           }
         : null,
     }

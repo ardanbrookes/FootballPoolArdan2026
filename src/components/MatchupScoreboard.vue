@@ -17,6 +17,29 @@ const away = computed(() => props.matchup.away)
 const home = computed(() => props.matchup.home)
 
 const homeLeads = computed(() => home.value.total > away.value.total)
+
+const winProb = computed(() => props.matchup.winProbability ?? null)
+
+/** Whichever side belongs to the viewer, so the bar reads from their point of view. */
+const mySide = computed(() => {
+  if (!winProb.value) return null
+  const id = props.myTeamId
+  if (home.value.team.id === id) return { pct: winProb.value.home, team: home.value.team, side: 'home' }
+  if (away.value.team.id === id) return { pct: winProb.value.away, team: away.value.team, side: 'away' }
+  // Spectating someone else's matchup: show it from the home side.
+  return { pct: winProb.value.home, team: home.value.team, side: 'home' }
+})
+
+const probLabel = computed(() => {
+  const wp = winProb.value
+  if (!wp || !mySide.value) return ''
+  if (wp.settled) return mySide.value.pct >= 100 ? 'Won' : mySide.value.pct <= 0 ? 'Lost' : 'Tied'
+  const pct = mySide.value.pct
+  // Below 1% still isn't zero, and saying "0%" while the game is live is a lie.
+  if (pct > 0 && pct < 1) return '<1% to win'
+  if (pct < 100 && pct > 99) return '>99% to win'
+  return `${Math.round(pct)}% to win`
+})
 const awayLeads = computed(() => away.value.total > home.value.total)
 const margin = computed(() => Math.abs(home.value.total - away.value.total).toFixed(1))
 
@@ -77,6 +100,24 @@ const progress = (side) => {
     <div class="card-header">
       <h2>Your matchup</h2>
       <span v-if="margin !== '0.0'" class="tiny faint">{{ margin }} apart</span>
+    </div>
+
+    <div v-if="winProb && mySide" class="winprob">
+      <div class="wp-head">
+        <span class="wp-pct" :class="{ good: mySide.pct >= 50, bad: mySide.pct < 50 }">
+          {{ probLabel }}
+        </span>
+        <span class="tiny faint">
+          projected {{ winProb.projected.away.toFixed(1) }} – {{ winProb.projected.home.toFixed(1) }}
+        </span>
+      </div>
+      <div class="wp-bar" role="img" :aria-label="probLabel">
+        <div class="wp-fill" :class="{ good: mySide.pct >= 50 }" :style="{ width: mySide.pct + '%' }" />
+      </div>
+      <div class="tiny faint wp-note">
+        From projected points and how much each position usually swings. A rough guide, not a
+        prediction.
+      </div>
     </div>
 
     <div class="scoreline">
@@ -323,5 +364,52 @@ const progress = (side) => {
   .total {
     font-size: 1.35rem;
   }
+}
+.winprob {
+  padding: 0.6rem 0.85rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.wp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.wp-pct {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.wp-pct.good {
+  color: var(--accent-hover);
+}
+
+.wp-pct.bad {
+  color: var(--warn);
+}
+
+.wp-bar {
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.wp-fill {
+  height: 100%;
+  background: var(--warn);
+  transition: width 0.4s ease;
+}
+
+.wp-fill.good {
+  background: var(--accent);
+}
+
+.wp-note {
+  margin-top: 0.35rem;
 }
 </style>

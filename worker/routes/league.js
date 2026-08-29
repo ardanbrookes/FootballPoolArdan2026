@@ -8,6 +8,7 @@ import { getPublicConfig, setSetting, getTiming } from '../services/settings.js'
 import { getWeekGames, getTeamGameStatus } from '../services/schedule.js'
 import { getWaiverOrder } from '../services/waivers.js'
 import { getPlayoffPicture } from '../services/playoffs.js'
+import { winProbability } from '../services/winprob.js'
 
 const router = new Hono()
 router.use('*', loadLeague)
@@ -157,6 +158,8 @@ router.get('/matchup', requireUser, async (c) => {
       team: meta,
       starters,
       total: Math.round(starters.reduce((sum, s) => sum + (s.player?.points ?? 0), 0) * 100) / 100,
+      projectedTotal:
+        Math.round(starters.reduce((sum, s) => sum + (s.player?.projectedPoints ?? 0), 0) * 100) / 100,
       yetToPlay: starters.filter((s) => s.player && s.player.game?.status === 'scheduled').length,
       inProgress: live,
       final: played,
@@ -169,7 +172,13 @@ router.get('/matchup', requireUser, async (c) => {
     week,
     nflWeek,
     myTeamId: team.id,
-    matchup: { id: matchup.id, status: matchup.status, home, away },
+    matchup: {
+      id: matchup.id,
+      status: matchup.status,
+      home,
+      away,
+      winProbability: winProbability(home.starters, away.starters),
+    },
   })
 })
 

@@ -13,7 +13,7 @@
 import { get, query, batch, stmt } from '../db.js'
 import { rosterSlots, roster as rosterConfig } from '../config.js'
 import { getLockState, isPlayerLocked, assertPlayerMovable, assertAllowed, playerLockReason } from './locks.js'
-import { getWeekPoints } from './scoring.js'
+import { getWeekPoints, getWeekProjections } from './scoring.js'
 import { systemMessageStatement } from './chat.js'
 import {
   AVAILABILITY,
@@ -51,11 +51,13 @@ export function canPlayerFillSlot(player, slotId) {
 export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
   const locks = lockState || (await getLockState(leagueId))
 
-  const [points, rostered, lineup] = await Promise.all([
+  const [points, projections, rostered, lineup] = await Promise.all([
     getWeekPoints(season, week),
+    getWeekProjections(season, week),
     query(
       `SELECT p.id, p.full_name, p.position, p.fantasy_positions, p.nfl_team, p.injury_status,
-              p.status, p.bye_week, p.jersey_number, rp.acquired_at, rp.acquired_via, rp.on_ir
+              p.status, p.bye_week, p.jersey_number, rp.acquired_at, rp.acquired_via, rp.on_ir,
+              rp.on_trade_block
          FROM roster_players rp
          JOIN players p ON p.id = rp.player_id
         WHERE rp.league_id = @leagueId AND rp.team_id = @teamId`,
@@ -84,7 +86,9 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     acquiredAt: player.acquired_at,
     acquiredVia: player.acquired_via,
     onIr: Boolean(player.on_ir),
+    onTradeBlock: Boolean(player.on_trade_block),
     points: points.get(player.id) ?? 0,
+    projectedPoints: projections.get(player.id) ?? 0,
     locked: isPlayerLocked(locks, player),
     lockReason: playerLockReason(locks, player),
   })
@@ -144,7 +148,14 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     irCandidates: rostered
       .filter((p) => !p.on_ir && isIrEligible(p))
       .map((p) => p.id),
-    projectedPoints: starters.reduce((sum, s) => sum + (s.player?.points ?? 0), 0),
+    /**
+     * Projected, not scored. This used to sum `points`, which is what a player
+     * has ALREADY scored — so before kickoff the "projected" total was always
+     * zero, while the Acquisitions page showed real numbers because it looks
+     * projections up separately.
+     */
+    projectedPoints:
+      Math.round(starters.reduce((sum, s) => sum + (s.player?.projectedPoints ?? 0), 0) * 100) / 100,
   }
 }
 
