@@ -247,11 +247,14 @@ export async function processWaivers(leagueId, { dryRun = false } = {}) {
   }
   for (const list of claimsByTeam.values()) list.sort((a, b) => a.priority - b.priority)
 
-  const ownership = new Map(
-    (await query('SELECT player_id, team_id FROM roster_players WHERE league_id = @leagueId', { leagueId })).map(
-      (r) => [r.player_id, r.team_id],
-    ),
+  const rosterRows = await query(
+    'SELECT player_id, team_id, on_ir FROM roster_players WHERE league_id = @leagueId',
+    { leagueId },
   )
+  const ownership = new Map(rosterRows.map((r) => [r.player_id, r.team_id]))
+  // Who currently occupies an IR slot, so a claim that drops one of them can
+  // take the spot it frees rather than being told IR is full.
+  const onIr = new Set(rosterRows.filter((r) => r.on_ir).map((r) => r.player_id))
   const rosterCounts = new Map(
     (
       await query(
@@ -360,7 +363,8 @@ export async function processWaivers(leagueId, { dryRun = false } = {}) {
         )
         continue
       }
-      if ((irCounts.get(teamId) ?? 0) >= rosterConfig.irSlots) {
+      const freed = claim.drop_player_id && onIr.has(claim.drop_player_id) ? 1 : 0
+      if ((irCounts.get(teamId) ?? 0) - freed >= rosterConfig.irSlots) {
         resolve(claim, CLAIM_STATUS.FAILED, 'Your IR slot was already full.')
         continue
       }
@@ -392,8 +396,12 @@ export async function processWaivers(leagueId, { dryRun = false } = {}) {
     if (claim.drop_player_id) ownership.delete(claim.drop_player_id)
     // An IR arrival never touches the active count; a drop still frees a spot.
     if (toIr) {
-      irCounts.set(teamId, (irCounts.get(teamId) ?? 0) + 1)
-      if (claim.drop_player_id) rosterCounts.set(teamId, count - 1)
+      // Net zero when the dropped player was the IR occupant.
+      const freedIr = claim.drop_player_id && onIr.has(claim.drop_player_id) ? 1 : 0
+      irCounts.set(teamId, (irCounts.get(teamId) ?? 0) + 1 - freedIr)
+      // Only an ACTIVE drop frees an active spot; dropping off IR does not.
+      if (claim.drop_player_id && !freedIr) rosterCounts.set(teamId, count - 1)
+      if (claim.drop_player_id) onIr.delete(claim.drop_player_id)
     } else {
       rosterCounts.set(teamId, count + (claim.drop_player_id ? 0 : 1))
     }

@@ -387,6 +387,19 @@ export async function addFreeAgent({
   }
   assertPlayerMovable(locks, target, 'add')
 
+  // Resolve the drop candidate first: whether the IR slot is really full
+  // depends on whether the player being dropped is the one occupying it.
+  let dropping = null
+  if (dropPlayerId) {
+    dropping = await get(
+      `SELECT p.*, rp.on_ir FROM roster_players rp JOIN players p ON p.id = rp.player_id
+        WHERE rp.league_id = @leagueId AND rp.team_id = @teamId AND p.id = @playerId`,
+      { leagueId, teamId, playerId: dropPlayerId },
+    )
+    if (!dropping) throw httpError('The player you want to drop is not on your roster.', 400)
+    assertPlayerMovable(locks, dropping, 'drop')
+  }
+
   // Signing someone straight onto IR. They never occupy an active spot, so a
   // full roster is no obstacle — the only limit that applies is the IR slot.
   if (toIr) {
@@ -397,24 +410,20 @@ export async function addFreeAgent({
         'NOT_IR_ELIGIBLE',
       )
     }
-    if ((await getIrCount(leagueId, teamId)) >= rosterConfig.irSlots) {
+    // Dropping the current occupant frees the slot the newcomer is about to
+    // take, so it must not count against them.
+    const freed = dropping?.on_ir ? 1 : 0
+    if ((await getIrCount(leagueId, teamId)) - freed >= rosterConfig.irSlots) {
       throw httpError(
-        `Your ${rosterConfig.irSlots === 1 ? 'IR slot is' : 'IR slots are'} full.`,
+        `Your ${rosterConfig.irSlots === 1 ? 'IR slot is' : 'IR slots are'} full. ` +
+          'Drop whoever is on IR to make room.',
         409,
         'IR_FULL',
       )
     }
   }
 
-  if (dropPlayerId) {
-    const dropping = await get(
-      `SELECT p.* FROM roster_players rp JOIN players p ON p.id = rp.player_id
-        WHERE rp.league_id = @leagueId AND rp.team_id = @teamId AND p.id = @playerId`,
-      { leagueId, teamId, playerId: dropPlayerId },
-    )
-    if (!dropping) throw httpError('The player you want to drop is not on your roster.', 400)
-    assertPlayerMovable(locks, dropping, 'drop')
-  } else if (!toIr && (await getRosterCount(leagueId, teamId)) >= rosterConfig.maxPlayers) {
+  if (!dropPlayerId && !toIr && (await getRosterCount(leagueId, teamId)) >= rosterConfig.maxPlayers) {
     throw httpError(
       `Your roster is full (${rosterConfig.maxPlayers}). Choose a player to drop.`,
       409,

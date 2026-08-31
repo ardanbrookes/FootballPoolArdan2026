@@ -32,6 +32,21 @@ const canGoToIr = computed(() => {
   return counts ? counts.ir < counts.irMax : false
 })
 
+/**
+ * Whoever is occupying IR, offered as a swap when the slot is full.
+ *
+ * Without this, signing an injured free agent with a full IR was simply
+ * impossible: the newcomer can only go to IR, and IR had no room. Dropping the
+ * current occupant is the move, and it needs to be one click rather than
+ * "drop them first, then come back and sign".
+ */
+const irOccupants = computed(() => {
+  if (!props.incoming?.irEligible) return []
+  const counts = props.roster?.counts
+  if (!counts || counts.ir < counts.irMax) return []
+  return (props.roster?.ir ?? []).filter((p) => !p.locked)
+})
+
 const rosterPlayers = (roster) => [
   ...(roster?.starters || []).map((s) => s.player).filter(Boolean),
   ...(roster?.bench || []),
@@ -51,6 +66,9 @@ const rosterPlayers = (roster) => [
           <template v-if="mode === 'claim'">
             Waiver claims need a drop candidate — if the claim is awarded, this player is released.
           </template>
+          <template v-else-if="required && irOccupants.length">
+            Your roster is full and so is IR — but they qualify for IR, so you can take that spot.
+          </template>
           <template v-else-if="required && canGoToIr">
             Your roster is full — but they qualify for IR, which sits outside the limit.
           </template>
@@ -67,6 +85,20 @@ const rosterPlayers = (roster) => [
           <span class="bold small">Put them straight on IR</span>
           <span class="tiny faint">
             {{ incoming?.injury_status }} — uses your IR slot, so nobody has to be dropped
+          </span>
+        </button>
+
+        <button
+          v-for="p in irOccupants"
+          :key="`ir-${p.id}`"
+          class="option option-ir"
+          :disabled="busy"
+          @click="emit('confirm', { dropPlayerId: p.id, toIr: true })"
+        >
+          <span class="bold small">Take the IR spot from {{ p.name }}</span>
+          <span class="tiny faint">
+            {{ p.name }} is dropped to waivers and {{ incoming?.full_name || incoming?.name }} goes
+            on IR — your active roster is untouched
           </span>
         </button>
 
