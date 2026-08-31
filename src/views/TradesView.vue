@@ -113,35 +113,9 @@ function toggle(side, id) {
   else list.value.push(id)
 }
 
-// --- draft picks (record-keeping only) ---
-const givePicks = ref([])
-const receivePicks = ref([])
-const pickSide = ref('give')
-const pickRound = ref(1)
-
-/** Next two drafts — you can't trade a pick in a draft that's already happened. */
-const pickSeasons = computed(() => {
-  const base = (league.league?.season ?? new Date().getFullYear()) + 1
-  return [base, base + 1]
-})
-const pickSeason = ref(null)
-watch(pickSeasons, (seasons) => {
-  if (!pickSeason.value) pickSeason.value = seasons[0]
-}, { immediate: true })
-
-function addPick() {
-  const list = pickSide.value === 'give' ? givePicks : receivePicks
-  const pick = { season: pickSeason.value, round: pickRound.value }
-  // Silently ignore an exact duplicate rather than recording the same pick twice.
-  if (list.value.some((p) => p.season === pick.season && p.round === pick.round)) return
-  list.value.push(pick)
-}
-
 function resetBuilder() {
   give.value = []
   receive.value = []
-  givePicks.value = []
-  receivePicks.value = []
   note.value = ''
 }
 
@@ -154,8 +128,6 @@ async function propose() {
       receiverTeamId: partnerId.value,
       give: give.value,
       receive: receive.value,
-      givePicks: givePicks.value,
-      receivePicks: receivePicks.value,
       message: note.value || undefined,
     })
     message.value = 'Offer sent.'
@@ -196,14 +168,10 @@ async function cancel(trade) {
   }
 }
 
-// A picks-only offer is a legitimate offer, so it counts toward "has content".
 const canSubmit = computed(
   () =>
     partnerId.value &&
-    (give.value.length ||
-      receive.value.length ||
-      givePicks.value.length ||
-      receivePicks.value.length) &&
+    (give.value.length || receive.value.length) &&
     !busy.value &&
     league.allows.trade,
 )
@@ -216,11 +184,7 @@ const canSubmit = computed(
  */
 const live = useLive(
   async () => {
-    const building =
-      give.value.length ||
-      receive.value.length ||
-      givePicks.value.length ||
-      receivePicks.value.length
+    const building = give.value.length || receive.value.length
     if (busy.value || building) return
     await loadAll()
   },
@@ -330,56 +294,6 @@ onMounted(loadAll)
 
         <!-- Picks are recorded only — nothing in the app drafts, so these exist
              so next year's order can be set by hand from an agreed record. -->
-        <div class="picks">
-          <div class="row-between" style="margin-bottom: 0.4rem">
-            <h3 class="small bold" style="margin: 0">Draft picks</h3>
-            <span class="tiny faint">Tracked for next year's draft — no effect in-app</span>
-          </div>
-
-          <div class="pick-builder">
-            <select v-model="pickSide">
-              <option value="give">You send</option>
-              <option value="receive">You receive</option>
-            </select>
-            <select v-model.number="pickSeason">
-              <option v-for="y in pickSeasons" :key="y" :value="y">{{ y }}</option>
-            </select>
-            <select v-model.number="pickRound">
-              <option v-for="r in 10" :key="r" :value="r">Round {{ r }}</option>
-            </select>
-            <button class="btn btn-sm" @click="addPick">Add pick</button>
-          </div>
-
-          <div v-if="givePicks.length || receivePicks.length" class="pick-lists">
-            <div>
-              <div class="tiny faint">You send</div>
-              <div v-if="!givePicks.length" class="tiny faint">—</div>
-              <button
-                v-for="(p, i) in givePicks"
-                :key="`g${i}`"
-                class="pick-chip"
-                title="Remove"
-                @click="givePicks.splice(i, 1)"
-              >
-                {{ p.season }} R{{ p.round }} ✕
-              </button>
-            </div>
-            <div>
-              <div class="tiny faint">You receive</div>
-              <div v-if="!receivePicks.length" class="tiny faint">—</div>
-              <button
-                v-for="(p, i) in receivePicks"
-                :key="`r${i}`"
-                class="pick-chip"
-                title="Remove"
-                @click="receivePicks.splice(i, 1)"
-              >
-                {{ p.season }} R{{ p.round }} ✕
-              </button>
-            </div>
-          </div>
-        </div>
-
         <div style="margin-top: 1rem">
           <label for="note">Message (optional)</label>
           <input id="note" v-model="note" placeholder="Add a note to this offer…" />
@@ -583,49 +497,6 @@ onMounted(loadAll)
 }
 
 /* ---- draft picks ---- */
-
-.picks {
-  margin-top: 1rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--border);
-}
-
-.pick-builder {
-  display: grid;
-  grid-template-columns: auto auto auto auto;
-  gap: 0.4rem;
-  justify-content: start;
-}
-
-@media (max-width: 620px) {
-  .pick-builder {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.pick-lists {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-  margin-top: 0.6rem;
-}
-
-.pick-chip {
-  display: inline-block;
-  margin: 0.2rem 0.3rem 0 0;
-  padding: 0.15rem 0.45rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-family: var(--mono);
-}
-
-.pick-chip:hover {
-  border-color: var(--danger);
-  color: var(--danger);
-}
 
 /* Picks read as a different kind of asset to players. */
 .pick-note {

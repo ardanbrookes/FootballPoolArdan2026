@@ -39,8 +39,6 @@ router.post('/', requireTeam, async (c) => {
     give = [],
     receive = [],
     // [{ season, round, originalTeamId? }] — recorded, not enforced.
-    givePicks = [],
-    receivePicks = [],
     message,
   } = c.get('body') || {}
   if (!receiverTeamId) return c.json({ error: 'receiverTeamId is required.' }, 400)
@@ -53,8 +51,6 @@ router.post('/', requireTeam, async (c) => {
     receiverTeamId: Number(receiverTeamId),
     give: give.map(String),
     receive: receive.map(String),
-    givePicks,
-    receivePicks,
     message,
   })
 

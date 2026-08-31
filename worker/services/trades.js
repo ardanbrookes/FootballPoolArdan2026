@@ -33,13 +33,21 @@ function ownedBy(leagueId, teamId, playerIds) {
   )
 }
 
+/**
+ * Draft picks can no longer be attached to a trade.
+ *
+ * The `trade_picks` table and its read path are deliberately left in place:
+ * picks were tradeable for a while and one ACCEPTED trade already carries one,
+ * which is a real agreement between two managers and exactly the record this
+ * was built to keep. Dropping it would quietly erase what they shook on.
+ */
 export async function proposeTrade({
   leagueId, season, week, proposerTeamId, receiverTeamId,
-  give, receive, givePicks = [], receivePicks = [], message,
+  give, receive, message,
 }) {
   if (proposerTeamId === receiverTeamId) throw httpError("You can't trade with yourself.")
-  if (!give?.length && !receive?.length && !givePicks.length && !receivePicks.length) {
-    throw httpError('A trade needs at least one player or draft pick.')
+  if (!give?.length && !receive?.length) {
+    throw httpError('A trade needs at least one player.')
   }
 
   const locks = await getLockState(leagueId)
@@ -78,36 +86,9 @@ export async function proposeTrade({
         playerId: player.id,
       }),
     ),
-    ...pickStatements(tradeId, proposerTeamId, givePicks),
-    ...pickStatements(tradeId, receiverTeamId, receivePicks),
   ])
 
   return getTrade(tradeId)
-}
-
-/**
- * Draft picks attached to a trade.
- *
- * Recorded only — the app never runs a draft, so nothing consumes these. They
- * exist so next season's order can be adjusted by hand against an agreed record
- * rather than someone's memory of a group chat.
- */
-function pickStatements(tradeId, fromTeamId, picks) {
-  return (picks || []).map((pick) =>
-    stmt(
-      `INSERT INTO trade_picks (trade_id, from_team_id, original_team_id, season, round)
-       VALUES (@tradeId, @fromTeamId, @originalTeamId, @season, @round)`,
-      {
-        tradeId,
-        fromTeamId,
-        // Defaults to the team giving it up; set explicitly when flipping on a
-        // pick acquired from someone else.
-        originalTeamId: pick.originalTeamId ?? fromTeamId,
-        season: Number(pick.season),
-        round: Number(pick.round),
-      },
-    ),
-  )
 }
 
 export async function getTrade(tradeId) {

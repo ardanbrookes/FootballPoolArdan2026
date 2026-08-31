@@ -119,10 +119,6 @@ const progress = (side) => {
       <div class="wp-bar" role="img" :aria-label="probLabel">
         <div class="wp-fill" :class="{ good: mySide.pct >= 50 }" :style="{ width: mySide.pct + '%' }" />
       </div>
-      <div class="tiny faint wp-note">
-        From projected points and how much each position usually swings. A rough guide, not a
-        prediction.
-      </div>
     </div>
 
     <div class="scoreline">
@@ -431,7 +427,4 @@ const progress = (side) => {
   background: var(--accent);
 }
 
-.wp-note {
-  margin-top: 0.35rem;
-}
 </style>

@@ -110,9 +110,6 @@ onUnmounted(() => clearInterval(clockTimer))
         <button class="btn btn-primary" type="submit" :disabled="signingIn">
           {{ signingIn ? 'Signing in…' : 'Sign in' }}
         </button>
-        <p class="tiny faint center" style="margin: 0">
-          Demo league — password is <code>football</code>
-        </p>
       </div>
     </form>
   </div>
