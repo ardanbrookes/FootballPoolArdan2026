@@ -16,6 +16,20 @@
 import { get, query, run, batch, stmt } from '../db.js'
 import { getSleeperConfig, rosterSlots, roster as rosterConfig } from '../config.js'
 
+/**
+ * Initials for a team name, e.g. "Kirkin off my Cousins" -> "KOMC".
+ *
+ * Falls back to the first letters of a single-word name, and to the team id if
+ * a name somehow yields nothing usable.
+ */
+function deriveAbbreviation(name, teamId) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean)
+  const initials = words.map((w) => w[0]).join('').toUpperCase().slice(0, 4)
+  if (initials.length >= 2) return initials
+  const letters = String(name || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 3)
+  return letters.length >= 2 ? letters : `T${teamId}`
+}
+
 /** Sleeper marks empty starter slots with "0". */
 const EMPTY_SLOT = '0'
 
@@ -373,9 +387,14 @@ export async function importSleeperLeague({
     }
 
     if (importTeamNames && sleeper.metadata?.team_name) {
+      // The abbreviation has to move with the name. Updating only the name left
+      // every imported team wearing the initials of whatever placeholder it
+      // replaced — "Kirkin off my Cousins" showed up as EZE, from End Zone
+      // Enforcers — and those initials are what trade and signing history used.
       writes.push(
-        stmt('UPDATE teams SET name = @name WHERE id = @teamId', {
+        stmt('UPDATE teams SET name = @name, abbreviation = @abbr WHERE id = @teamId', {
           name: sleeper.metadata.team_name,
+          abbr: deriveAbbreviation(sleeper.metadata.team_name, team.id),
           teamId: team.id,
         }),
       )

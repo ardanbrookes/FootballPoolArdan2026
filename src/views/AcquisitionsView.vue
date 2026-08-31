@@ -235,7 +235,7 @@ onMounted(loadAll)
               </span>
               <div style="flex: 1; min-width: 0">
                 <div class="small">
-                  <span class="bold">{{ tx.team_abbr }}</span>
+                  <span class="bold">{{ tx.team_name }}</span>
                   {{ tx.type === 'add' ? 'added' : 'dropped' }}
                   {{ tx.player_name }}
                 </div>
@@ -307,7 +307,7 @@ onMounted(loadAll)
               </span>
               <div style="flex: 1; min-width: 0">
                 <div class="small">
-                  <span class="bold">{{ result.team_abbr }}</span> · {{ result.add_player_name }}
+                  <span class="bold">{{ result.team_name }}</span> · {{ result.add_player_name }}
                 </div>
                 <div class="tiny faint">{{ result.result_reason }}</div>
               </div>

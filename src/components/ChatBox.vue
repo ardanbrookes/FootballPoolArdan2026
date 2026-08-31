@@ -194,7 +194,7 @@ onUnmounted(() => {
         <div v-else class="msg">
           <div class="msg-head">
             <span class="small bold">{{ item.author }}</span>
-            <span v-if="item.teamAbbr" class="pill pill-pos tiny">{{ item.teamAbbr }}</span>
+            <span v-if="item.teamName" class="pill pill-pos tiny">{{ item.teamName }}</span>
             <span class="tiny faint time">{{ time(item.createdAt) }}</span>
           </div>
           <div class="msg-body small">

@@ -162,7 +162,7 @@ const canAddNow = () => props.lockState?.allows?.freeAgentAdd
 
         <div class="actions">
           <span v-if="player.availability === 'rostered'" class="pill pill-info">
-            {{ player.owner_team_abbr }}
+            {{ player.owner_team_name }}
           </span>
 
           <template v-else-if="player.availability === 'waivers'">

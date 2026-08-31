@@ -387,8 +387,8 @@ onMounted(loadAll)
         <div v-for="trade in settled" :key="trade.id" class="trade">
           <div class="row-between">
             <span class="small">
-              <span class="bold">{{ trade.proposer_abbr }}</span> ↔
-              <span class="bold">{{ trade.receiver_abbr }}</span>
+              <span class="bold">{{ trade.proposer_name }}</span> ↔
+              <span class="bold">{{ trade.receiver_name }}</span>
             </span>
             <span class="pill" :class="trade.status === 'accepted' ? 'pill-accent' : 'pill-danger'">
               {{ trade.status }}
@@ -396,7 +396,7 @@ onMounted(loadAll)
           </div>
           <div class="trade-body">
             <div>
-              <div class="tiny faint">{{ trade.proposer_abbr }} sent</div>
+              <div class="tiny faint">{{ trade.proposer_name }} sent</div>
               <div v-for="p in trade.proposerGives" :key="p.id" class="small">{{ p.full_name }}</div>
               <div v-for="p in trade.proposerPicks" :key="`p${p.id}`" class="small pick-note">
                 {{ p.season }} Round {{ p.round }} pick
@@ -406,7 +406,7 @@ onMounted(loadAll)
               </div>
             </div>
             <div>
-              <div class="tiny faint">{{ trade.receiver_abbr }} sent</div>
+              <div class="tiny faint">{{ trade.receiver_name }} sent</div>
               <div v-for="p in trade.receiverGives" :key="p.id" class="small">{{ p.full_name }}</div>
               <div v-for="p in trade.receiverPicks" :key="`p${p.id}`" class="small pick-note">
                 {{ p.season }} Round {{ p.round }} pick

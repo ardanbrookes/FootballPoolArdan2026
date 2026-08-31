@@ -71,7 +71,7 @@ export async function postMessage({ leagueId, userId, teamId = null, body }) {
 
   return get(
     `SELECT m.id, m.kind, m.event_type, m.body, m.meta_json, m.created_at,
-            u.display_name AS author, t.abbreviation AS team_abbr
+            u.display_name AS author, t.abbreviation AS team_abbr, t.name AS team_name
        FROM messages m
        LEFT JOIN users u ON u.id = m.user_id
        LEFT JOIN teams t ON t.id = m.team_id
