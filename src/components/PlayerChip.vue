@@ -5,6 +5,8 @@ import { computed } from 'vue'
 const props = defineProps({
   player: { type: Object, required: true },
   showPoints: { type: Boolean, default: false },
+  /** Show this week's opponent ("@BUF") instead of the bye-week number. */
+  showOpponent: { type: Boolean, default: false },
 })
 
 /**
@@ -65,7 +67,13 @@ const pointsTitle = computed(() =>
       </div>
       <div class="chip-meta tiny faint">
         {{ player.nflTeam || player.nfl_team || 'FA' }}
-        <template v-if="player.byeWeek || player.bye_week">· bye {{ player.byeWeek || player.bye_week }}</template>
+        <!-- Who they actually play this week. On a bye that is the thing worth
+             knowing, so it replaces the opponent rather than sitting beside it. -->
+        <template v-if="showOpponent && player.onBye"> · <span class="bye">BYE</span></template>
+        <template v-else-if="showOpponent && player.opponent"> · {{ player.opponent }}</template>
+        <template v-else-if="player.byeWeek || player.bye_week">
+          · bye {{ player.byeWeek || player.bye_week }}
+        </template>
       </div>
     </div>
     <div v-if="showPoints" class="chip-points mono" :class="{ proj: !scored }" :title="pointsTitle">
@@ -142,5 +150,9 @@ const pointsTitle = computed(() =>
   text-transform: uppercase;
   color: var(--text-faint);
   line-height: 1;
+}
+.bye {
+  color: var(--warn);
+  font-weight: 600;
 }
 </style>

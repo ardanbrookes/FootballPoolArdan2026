@@ -11,9 +11,9 @@
  */
 
 import { get, query, batch, stmt } from '../db.js'
-import { rosterSlots, roster as rosterConfig } from '../config.js'
+import { rosterSlots, roster as rosterConfig, playoffs } from '../config.js'
 import { getLockState, isPlayerLocked, assertPlayerMovable, assertAllowed, playerLockReason } from './locks.js'
-import { getWeekPoints, getWeekProjections } from './scoring.js'
+import { getWeekPoints, getWeekProjections, getRestOfSeasonPoints } from './scoring.js'
 import { getTeamGameStatus } from './schedule.js'
 import { systemMessageStatement } from './chat.js'
 import {
@@ -56,9 +56,12 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
   // player's number should read as a score or a projection.
   const nflWeek = locks.activeWeek ?? week
 
-  const [points, projections, games, rostered, lineup] = await Promise.all([
+  const [points, projections, restOfSeason, games, rostered, lineup] = await Promise.all([
     getWeekPoints(season, week),
     getWeekProjections(season, week),
+    // Carried here as well as on /rosters so the trade builder shows the same
+    // number for your own players as it does for the other team's.
+    getRestOfSeasonPoints(season, week, playoffs.regularSeasonWeeks),
     getTeamGameStatus(season, nflWeek).catch(() => new Map()),
     query(
       `SELECT p.id, p.full_name, p.position, p.fantasy_positions, p.nfl_team, p.injury_status,
@@ -95,6 +98,7 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     onTradeBlock: Boolean(player.on_trade_block),
     points: points.get(player.id) ?? 0,
     projectedPoints: projections.get(player.id) ?? 0,
+    restOfSeasonPoints: restOfSeason.get(player.id) ?? 0,
     /**
      * Has this player's game kicked off?
      *
@@ -105,6 +109,17 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     gameStarted: ['in_progress', 'final'].includes(
       games.get(player.nfl_team)?.status ?? 'scheduled',
     ),
+    /**
+     * Who they play this week — "@BUF" or "vs KC" — and a bye flag.
+     *
+     * Same shape the matchup scoreboard uses, so setting a lineup shows the
+     * same information as watching it play out. A player with no game is on
+     * bye, which is the quiet way to lose a week.
+     */
+    opponent: games.get(player.nfl_team)
+      ? `${games.get(player.nfl_team).isHome ? 'vs ' : '@'}${games.get(player.nfl_team).opponent}`
+      : null,
+    onBye: !games.get(player.nfl_team),
     locked: isPlayerLocked(locks, player),
     lockReason: playerLockReason(locks, player),
   })

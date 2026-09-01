@@ -240,6 +240,10 @@ onMounted(async () => {
               <span class="pill pill-pos" :class="`pos-${player.position}`">{{ player.position }}</span>
               <span class="small pname">{{ player.name }}</span>
               <span class="tiny faint nfl">{{ player.nflTeam }}</span>
+              <!-- What they scored, even though it counted for nothing. Leaving
+                   it blank made it impossible to see the points someone left on
+                   their bench, which is half the fun of reading a roster. -->
+              <span class="mono small bench-pts">{{ (player.points ?? 0).toFixed(1) }}</span>
             </div>
           </div>
         </div>
@@ -456,6 +460,10 @@ onMounted(async () => {
   font-weight: 700;
   color: var(--text-faint);
   text-transform: uppercase;
+}
+
+.bench-pts {
+  color: var(--text-faint);
 }
 
 .bench-label {

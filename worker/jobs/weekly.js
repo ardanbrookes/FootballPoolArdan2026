@@ -11,9 +11,17 @@ import { resetPoolToWaivers, nextWaiverClearTime } from '../services/players.js'
 import { ensureLineupRows } from '../services/roster.js'
 import { recalculateMatchups, recalculateStandings } from '../services/scoring.js'
 import { ensurePlayoffMatchups } from '../services/playoffs.js'
-import { syncWeekStats, syncWeekProjections, syncPlayers, recordSync } from '../services/sleeper.js'
+import { playoffs } from '../config.js'
+import {
+  syncWeekStats,
+  syncWeekProjections,
+  syncRestOfSeasonProjections,
+  syncPlayers,
+  recordSync,
+} from '../services/sleeper.js'
 import { syncWeek } from '../services/schedule.js'
 import { pruneNews, clearUnresolvedXref } from '../services/news.js'
+import { expirePendingTrades } from '../services/trades.js'
 
 function allLeagues() {
   return query('SELECT id, season, season_type, current_week, playoff_week FROM leagues')
@@ -67,9 +75,22 @@ export async function runPoolClose({ leagueId } = {}) {
 
   for (const league of await leaguesFor(leagueId)) {
     const pool = await resetPoolToWaivers(league.id, await nextWaiverClearTime(league.id))
-    results.push({ leagueId: league.id, playersOnWaivers: pool.count })
-    await recordSync(`pool-close:${league.id}`, 'ok', `${pool.count} free agents moved to waivers`)
-    console.log(`[pool-close] league ${league.id}: ${pool.count} free agents moved to waivers`)
+
+    // Pending offers die with the lock. Trades are closed from here until the
+    // week resets, so anything still outstanding can't be accepted anyway —
+    // and an offer made on Thursday means something very different once
+    // Sunday's injuries are known. Better to expire it than leave it hanging.
+    const expired = await expirePendingTrades(league.id)
+
+    results.push({ leagueId: league.id, playersOnWaivers: pool.count, tradesExpired: expired.count })
+    await recordSync(
+      `pool-close:${league.id}`,
+      'ok',
+      `${pool.count} free agents moved to waivers, ${expired.count} trades expired`,
+    )
+    console.log(
+      `[pool-close] league ${league.id}: ${pool.count} to waivers, ${expired.count} trades expired`,
+    )
   }
 
   return results
@@ -188,6 +209,20 @@ export async function runDailySync() {
       summary.schedules.push(await syncWeek(league.season, league.current_week, league.season_type))
     } catch (err) {
       console.error(`[sync] schedule sync failed for league ${league.id}:`, err.message)
+    }
+
+    // Rest-of-season projections, for trade evaluation. Self-throttling: weeks
+    // already fetched recently are skipped, so this is only expensive once.
+    try {
+      const ros = await syncRestOfSeasonProjections(
+        league.season,
+        league.current_week,
+        playoffs.regularSeasonWeeks,
+        league.season_type,
+      )
+      summary.restOfSeason = ros
+    } catch (err) {
+      console.error('[sync] rest-of-season projections failed:', err.message)
     }
   }
 

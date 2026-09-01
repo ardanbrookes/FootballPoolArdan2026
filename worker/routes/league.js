@@ -3,12 +3,18 @@ import { DateTime } from 'luxon'
 import { get, query } from '../db.js'
 import { loadLeague, requireCommissioner, requireUser } from '../middleware/auth.js'
 import { getLockState, isPlayerLocked, playerLockReason } from '../services/locks.js'
-import { getStandings, getLineupWithPoints } from '../services/scoring.js'
+import {
+  getStandings,
+  getLineupWithPoints,
+  getWeekPoints,
+  getRestOfSeasonPoints,
+} from '../services/scoring.js'
 import { getPublicConfig, setSetting, getTiming } from '../services/settings.js'
 import { getWeekGames, getTeamGameStatus } from '../services/schedule.js'
 import { getWaiverOrder } from '../services/waivers.js'
 import { getPlayoffPicture } from '../services/playoffs.js'
 import { winProbability } from '../services/winprob.js'
+import { playoffs } from '../config.js'
 
 const router = new Hono()
 router.use('*', loadLeague)
@@ -281,9 +287,25 @@ router.get('/rosters', async (c) => {
   // the trade builder needs to know an opponent's Thursday-night player can't
   // move *before* the offer is built, rather than failing on submit.
   const lockState = await getLockState(league.id)
+
+  // Rest-of-season projection is what a trade actually turns on, and bench
+  // players need their score too — the League page was showing a blank column
+  // for everyone not starting.
+  const [weekPoints, ros] = await Promise.all([
+    getWeekPoints(league.season, week, league.season_type),
+    getRestOfSeasonPoints(
+      league.season,
+      league.current_week,
+      playoffs.regularSeasonWeeks,
+      league.season_type,
+    ),
+  ])
+
   const decorate = (player) =>
     player && {
       ...player,
+      points: player.points ?? weekPoints.get(player.id) ?? 0,
+      restOfSeasonPoints: ros.get(player.id) ?? 0,
       locked: isPlayerLocked(lockState, { nfl_team: player.nflTeam }),
       lockReason: playerLockReason(lockState, { nfl_team: player.nflTeam }),
     }

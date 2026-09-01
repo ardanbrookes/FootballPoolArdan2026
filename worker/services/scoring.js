@@ -246,3 +246,38 @@ export function getStandings(leagueId) {
     { leagueId },
   )
 }
+
+/**
+ * Projected points from `fromWeek` to the end of the regular season.
+ *
+ * The number that decides a trade: what a player is worth for the rest of the
+ * run, not what they might do next Sunday. Summed from the stored weekly
+ * projections, so a player on bye simply has no row for that week and
+ * contributes nothing — which is the correct answer.
+ */
+export async function getRestOfSeasonPoints(
+  season,
+  fromWeek,
+  toWeek,
+  seasonType = 'regular',
+  scoringConfig = defaultScoring,
+) {
+  const rows = await query(
+    `SELECT player_id, stats_json FROM player_projections
+      WHERE season = @season AND season_type = @seasonType
+        AND week >= @fromWeek AND week <= @toWeek`,
+    { season, seasonType, fromWeek, toWeek },
+  )
+
+  const totals = new Map()
+  for (const row of rows) {
+    try {
+      const points = scoreStatLine(JSON.parse(row.stats_json), scoringConfig)
+      totals.set(row.player_id, (totals.get(row.player_id) ?? 0) + points)
+    } catch {
+      // Skip a malformed line rather than failing the whole lookup.
+    }
+  }
+  for (const [id, value] of totals) totals.set(id, Math.round(value * 10) / 10)
+  return totals
+}

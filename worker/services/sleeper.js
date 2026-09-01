@@ -227,3 +227,46 @@ export function getSyncLog() {
 export function getSyncEntry(key) {
   return get('SELECT key, last_run_at, status, detail FROM sync_log WHERE key = @key', { key })
 }
+
+/**
+ * Keep projections for the rest of the regular season, not just this week.
+ *
+ * "Projected rest of season" is the number that actually decides a trade, and
+ * it can only be summed if the weeks are stored. Sleeper does publish a
+ * season-long endpoint, but it returns a full-season total — no use once
+ * you're at week 6 and want what's left.
+ *
+ * Future weeks barely move, so each is refreshed at most every `maxAgeHours`.
+ * That keeps the daily job cheap: the first run fetches the whole remaining
+ * season, later ones usually fetch nothing.
+ */
+export async function syncRestOfSeasonProjections(
+  season,
+  fromWeek,
+  toWeek,
+  seasonType = 'regular',
+  { maxAgeHours = 72 } = {},
+) {
+  const cutoff = new Date(Date.now() - maxAgeHours * 3600_000).toISOString()
+  const synced = []
+  const skipped = []
+
+  for (let week = fromWeek; week <= toWeek; week++) {
+    const key = `projections:${season}:${seasonType}:${week}`
+    const entry = await getSyncEntry(key)
+    // The current week is refreshed constantly by the stats job; leave it be.
+    if (week !== fromWeek && entry && entry.last_run_at > cutoff) {
+      skipped.push(week)
+      continue
+    }
+    try {
+      const { count } = await syncWeekProjections(season, week, seasonType)
+      synced.push({ week, count })
+    } catch (err) {
+      // A week with no projections published yet is normal, not a failure.
+      console.warn(`[sync] projections unavailable for week ${week}: ${err.message}`)
+    }
+  }
+
+  return { synced: synced.length, skipped: skipped.length, weeks: synced }
+}

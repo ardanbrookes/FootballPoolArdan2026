@@ -267,3 +267,48 @@ export async function cancelTrade({ leagueId, tradeId, teamId }) {
   })
   return getTrade(tradeId)
 }
+
+/**
+ * Expire every outstanding offer in a league.
+ *
+ * Called at the Sunday lock. Trades are closed from that moment until the week
+ * resets, so a pending offer can't be accepted anyway — and an offer made on
+ * Thursday means something very different once Sunday's injuries are known.
+ * Expiring beats leaving it to be accepted days later against a changed team.
+ */
+export async function expirePendingTrades(leagueId) {
+  const pending = await query(
+    `SELECT tr.id, pt.name AS proposer_name, rt.name AS receiver_name
+       FROM trades tr
+       JOIN teams pt ON pt.id = tr.proposer_team_id
+       JOIN teams rt ON rt.id = tr.receiver_team_id
+      WHERE tr.league_id = @leagueId AND tr.status = 'pending'`,
+    { leagueId },
+  )
+  if (!pending.length) return { count: 0 }
+
+  const at = nowIso()
+  const writes = pending.map((trade) =>
+    stmt(
+      `UPDATE trades SET status = 'expired', resolved_at = @at,
+              response_message = 'Expired at the Sunday lock.'
+        WHERE id = @id`,
+      { id: trade.id, at },
+    ),
+  )
+
+  writes.push(
+    systemMessageStatement({
+      leagueId,
+      eventType: 'trade',
+      body:
+        pending.length === 1
+          ? `An offer between ${pending[0].proposer_name} and ${pending[0].receiver_name} expired at the lock.`
+          : `${pending.length} outstanding trade offers expired at the lock.`,
+      meta: { expired: pending.map((t) => t.id) },
+    }),
+  )
+
+  await batch(writes)
+  return { count: pending.length }
+}

@@ -11,7 +11,7 @@
  * changes roster shape rather than the week's lineup, so it goes through its own
  * endpoints and takes effect immediately — the parent handles those events.
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import PlayerChip from './PlayerChip.vue'
 import TeamNameEditor from './TeamNameEditor.vue'
 
@@ -46,6 +46,41 @@ const dirty = computed(() => {
 // The parent polls in the background; it needs to know not to refresh over the
 // top of edits that haven't been saved yet.
 watch(dirty, (value) => emit('dirty-change', value))
+
+/**
+ * Autosave.
+ *
+ * A lineup change is a decision, not a draft — there is no reason to make
+ * someone confirm it, and forgetting to hit Save while the Thursday lock
+ * approaches is a real way to lose a week.
+ *
+ * Debounced so that swapping two players is one write rather than two, and
+ * skipped while a save is already running so edits can't overtake each other.
+ */
+const savedAt = ref(null)
+let saveTimer = null
+
+watch(
+  () => assignments.value,
+  () => {
+    if (!props.canEdit || !dirty.value) return
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      if (dirty.value && !props.saving) save()
+    }, 700)
+  },
+  { deep: true },
+)
+
+watch(
+  () => props.saving,
+  (now, before) => {
+    // Went from saving to not saving with nothing outstanding: that landed.
+    if (before && !now && !dirty.value) savedAt.value = Date.now()
+  },
+)
+
+onUnmounted(() => clearTimeout(saveTimer))
 
 /** Everyone available to start — IR players are excluded by construction. */
 const allPlayers = computed(() => {
@@ -200,7 +235,12 @@ function doSwap(irPlayer, incoming) {
           @click="toggleSlot(slot)"
         >
           <span class="slot-label tiny">{{ slot.label }}</span>
-          <PlayerChip v-if="playerFor(slot.slot)" :player="playerFor(slot.slot)" show-points />
+          <PlayerChip
+            v-if="playerFor(slot.slot)"
+            :player="playerFor(slot.slot)"
+            show-points
+            show-opponent
+          />
           <span v-else class="faint small">Empty — tap to fill</span>
           <span v-if="canEdit && !playerFor(slot.slot)?.locked" class="chev faint">›</span>
         </button>
@@ -217,7 +257,7 @@ function doSwap(irPlayer, incoming) {
             :title="candidate.lockReason || ''"
             @click="assign(slot.slot, candidate.id)"
           >
-            <PlayerChip :player="candidate" show-points />
+            <PlayerChip :player="candidate" show-points show-opponent />
           </button>
           <button v-if="playerFor(slot.slot)" class="candidate clear" @click="clearSlot(slot.slot)">
             Move {{ playerFor(slot.slot).name }} to bench
@@ -234,7 +274,7 @@ function doSwap(irPlayer, incoming) {
       <div v-if="benchNow.length === 0" class="empty small">Bench is empty.</div>
       <div v-for="player in benchNow" :key="player.id" class="slot bench-row">
         <span class="slot-label tiny">BN</span>
-        <PlayerChip :player="player" show-points />
+        <PlayerChip :player="player" show-points show-opponent />
       </div>
 
       <!-- IR last: it isn't part of the week's lineup and scores nothing. -->
@@ -316,11 +356,13 @@ function doSwap(irPlayer, incoming) {
     </div>
 
     <div v-if="canEdit" class="card-footer">
-      <button class="btn btn-ghost btn-sm" :disabled="!dirty || saving" @click="reset">Reset</button>
-      <button class="btn btn-primary btn-sm" :disabled="!dirty || saving" @click="save">
-        <span v-if="saving" class="spinner" />
-        {{ saving ? 'Saving…' : 'Save lineup' }}
-      </button>
+      <span class="tiny faint status">
+        <template v-if="saving"><span class="spinner" /> Saving…</template>
+        <template v-else-if="dirty">Unsaved changes…</template>
+        <template v-else-if="savedAt">Saved automatically</template>
+        <template v-else>Changes save automatically</template>
+      </span>
+      <button class="btn btn-ghost btn-sm" :disabled="!dirty || saving" @click="reset">Undo</button>
     </div>
   </div>
 </template>
@@ -436,12 +478,19 @@ function doSwap(irPlayer, incoming) {
 
 .card-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
   border-top: 1px solid var(--border);
   background: var(--bg-inset);
 }
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .title-row {
   display: flex;
   align-items: baseline;

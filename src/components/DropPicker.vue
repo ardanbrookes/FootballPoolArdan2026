@@ -66,12 +66,6 @@ const rosterPlayers = (roster) => [
           <template v-if="mode === 'claim'">
             Waiver claims need a drop candidate — if the claim is awarded, this player is released.
           </template>
-          <template v-else-if="required && irOccupants.length">
-            Your roster is full and so is IR — but they qualify for IR, so you can take that spot.
-          </template>
-          <template v-else-if="required && canGoToIr">
-            Your roster is full — but they qualify for IR, which sits outside the limit.
-          </template>
           <template v-else-if="required"> Your roster is full. Choose someone to drop. </template>
           <template v-else> Optionally drop someone to make room. </template>
         </p>
@@ -82,10 +76,7 @@ const rosterPlayers = (roster) => [
           :disabled="busy"
           @click="emit('confirm', { dropPlayerId: null, toIr: true })"
         >
-          <span class="bold small">Put them straight on IR</span>
-          <span class="tiny faint">
-            {{ incoming?.injury_status }} — uses your IR slot, so nobody has to be dropped
-          </span>
+          <span class="bold small">Add to IR</span>
         </button>
 
         <button
@@ -95,11 +86,7 @@ const rosterPlayers = (roster) => [
           :disabled="busy"
           @click="emit('confirm', { dropPlayerId: p.id, toIr: true })"
         >
-          <span class="bold small">Take the IR spot from {{ p.name }}</span>
-          <span class="tiny faint">
-            {{ p.name }} is dropped to waivers and {{ incoming?.full_name || incoming?.name }} goes
-            on IR — your active roster is untouched
-          </span>
+          <span class="bold small">Add to IR, dropping {{ p.name }}</span>
         </button>
 
         <button
