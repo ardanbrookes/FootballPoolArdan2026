@@ -437,9 +437,11 @@ onMounted(async () => {
   border-bottom: none;
 }
 
+/* Deliberately inherits the starter grid. The bench used to override this with
+   one fewer column, from when it had no points cell — adding one pushed it into
+   an implicit column that lined up with nothing. */
 .lineup-row.bench {
   opacity: 0.75;
-  grid-template-columns: 2.4rem 2.8rem minmax(0, 1fr) 2.6rem;
 }
 
 .pname {
@@ -507,10 +509,6 @@ onMounted(async () => {
     padding-left: 0.6rem;
     padding-right: 0.6rem;
     gap: 0.35rem;
-  }
-
-  .lineup-row.bench {
-    grid-template-columns: 2.2rem 2.6rem minmax(0, 1fr) 2.2rem;
   }
 
   .detail-head,
