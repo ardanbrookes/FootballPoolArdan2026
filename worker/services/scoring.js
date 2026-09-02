@@ -319,14 +319,41 @@ export async function getRestOfSeasonPoints(
 ) {
   // Read the rollup, not the fourteen weekly rows per player. Summing at read
   // time cost ~2,000 rows to draw one page; this is one row per player.
-  const rows = await selectStatRows(
-    `SELECT player_id, points FROM player_ros_points
+  //
+  // Falls back to summing the weekly rows if the rollup is missing or hasn't
+  // been built for this week yet, so the deploy and the migration can land in
+  // either order and a stale rollup degrades rather than showing zeroes.
+  try {
+    const rows = await selectStatRows(
+      `SELECT player_id, points FROM player_ros_points
+        WHERE season = @season AND season_type = @seasonType
+          AND from_week = @fromWeek /**IDS**/`,
+      { season, seasonType, fromWeek },
+      playerIds,
+    )
+    if (rows.length) return new Map(rows.map((r) => [r.player_id, r.points]))
+  } catch {
+    // Table not there yet — fall through to the weekly sum.
+  }
+
+  const weekly = await selectStatRows(
+    `SELECT player_id, stats_json FROM player_projections
       WHERE season = @season AND season_type = @seasonType
-        AND from_week = @fromWeek /**IDS**/`,
-    { season, seasonType, fromWeek },
+        AND week >= @fromWeek AND week <= @toWeek /**IDS**/`,
+    { season, seasonType, fromWeek, toWeek },
     playerIds,
   )
-  return new Map(rows.map((r) => [r.player_id, r.points]))
+  const totals = new Map()
+  for (const row of weekly) {
+    try {
+      const points = scoreStatLine(JSON.parse(row.stats_json), scoringConfig)
+      totals.set(row.player_id, (totals.get(row.player_id) ?? 0) + points)
+    } catch {
+      // Skip a malformed line rather than failing the whole lookup.
+    }
+  }
+  for (const [id, value] of totals) totals.set(id, Math.round(value * 10) / 10)
+  return totals
 }
 
 /**
