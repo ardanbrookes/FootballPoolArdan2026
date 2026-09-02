@@ -37,7 +37,11 @@ router.get('/players', async (c) => {
   // Projections are for the week about to be played, which during the open
   // window is the league's current week.
   const week = Number(c.req.query('week') ?? league.current_week)
-  const projections = await getWeekProjections(league.season, week, league.season_type)
+  // Scoped to the players actually being returned. Unscoped this loaded every
+  // projection in the league — ~800 rows to annotate a page of 50.
+  const projections = await getWeekProjections(league.season, week, league.season_type, undefined, {
+    playerIds: players.map((p) => p.id),
+  })
 
   return c.json({
     week,

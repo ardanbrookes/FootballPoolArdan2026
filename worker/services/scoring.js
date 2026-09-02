@@ -317,12 +317,36 @@ export async function getRestOfSeasonPoints(
   scoringConfig = defaultScoring,
   { playerIds = null } = {},
 ) {
+  // Read the rollup, not the fourteen weekly rows per player. Summing at read
+  // time cost ~2,000 rows to draw one page; this is one row per player.
   const rows = await selectStatRows(
+    `SELECT player_id, points FROM player_ros_points
+      WHERE season = @season AND season_type = @seasonType
+        AND from_week = @fromWeek /**IDS**/`,
+    { season, seasonType, fromWeek },
+    playerIds,
+  )
+  return new Map(rows.map((r) => [r.player_id, r.points]))
+}
+
+/**
+ * Rebuild the rest-of-season rollup from the stored weekly projections.
+ *
+ * Run once a day, after the weekly projections are refreshed. Reading the
+ * weekly rows here is fine — it happens once, not on every page load.
+ */
+export async function rebuildRestOfSeasonPoints(
+  season,
+  fromWeek,
+  toWeek,
+  seasonType = 'regular',
+  scoringConfig = defaultScoring,
+) {
+  const rows = await query(
     `SELECT player_id, stats_json FROM player_projections
       WHERE season = @season AND season_type = @seasonType
-        AND week >= @fromWeek AND week <= @toWeek /**IDS**/`,
+        AND week >= @fromWeek AND week <= @toWeek`,
     { season, seasonType, fromWeek, toWeek },
-    playerIds,
   )
 
   const totals = new Map()
@@ -331,9 +355,19 @@ export async function getRestOfSeasonPoints(
       const points = scoreStatLine(JSON.parse(row.stats_json), scoringConfig)
       totals.set(row.player_id, (totals.get(row.player_id) ?? 0) + points)
     } catch {
-      // Skip a malformed line rather than failing the whole lookup.
+      // Skip a malformed line rather than failing the whole rebuild.
     }
   }
-  for (const [id, value] of totals) totals.set(id, Math.round(value * 10) / 10)
-  return totals
+
+  const writes = [...totals].map(([playerId, value]) =>
+    stmt(
+      `INSERT INTO player_ros_points (player_id, season, season_type, from_week, points, updated_at)
+       VALUES (@playerId, @season, @seasonType, @fromWeek, @points, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+       ON CONFLICT (player_id, season, season_type) DO UPDATE SET
+         from_week = excluded.from_week, points = excluded.points, updated_at = excluded.updated_at`,
+      { playerId, season, seasonType, fromWeek, points: Math.round(value * 10) / 10 },
+    ),
+  )
+  if (writes.length) await batch(writes)
+  return { players: writes.length, fromWeek, toWeek }
 }

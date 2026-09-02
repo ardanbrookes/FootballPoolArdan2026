@@ -9,7 +9,11 @@ import { get, query, run, batch, stmt } from '../db.js'
 import { processWaivers } from '../services/waivers.js'
 import { resetPoolToWaivers, nextWaiverClearTime } from '../services/players.js'
 import { ensureLineupRows } from '../services/roster.js'
-import { recalculateMatchups, recalculateStandings } from '../services/scoring.js'
+import {
+  recalculateMatchups,
+  recalculateStandings,
+  rebuildRestOfSeasonPoints,
+} from '../services/scoring.js'
 import { ensurePlayoffMatchups } from '../services/playoffs.js'
 import { playoffs } from '../config.js'
 import {
@@ -247,6 +251,14 @@ export async function runDailySync() {
         league.season_type,
       )
       summary.restOfSeason = ros
+      // Roll the freshly synced weeks into one total per player, so reads are
+      // one row rather than fourteen.
+      summary.rosRollup = await rebuildRestOfSeasonPoints(
+        league.season,
+        league.current_week,
+        playoffs.regularSeasonWeeks,
+        league.season_type,
+      )
     } catch (err) {
       console.error('[sync] rest-of-season projections failed:', err.message)
     }
