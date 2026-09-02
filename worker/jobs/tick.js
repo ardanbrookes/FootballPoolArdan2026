@@ -95,9 +95,11 @@ export async function runTick({ force = null } = {}) {
   }
 
   // Live scoring: cheap enough to run on every tick during the season.
+  // Only does anything while games are actually being played — see
+  // hasLiveFootball. Reported either way so a quiet tick is legible.
   if (force === 'stats' || force === null) {
-    await runStatsRefresh()
-    ran.push({ job: 'stats-refresh' })
+    const stats = await runStatsRefresh({ force: force === 'stats' })
+    ran.push({ job: 'stats-refresh', detail: stats[0] ?? null })
   }
 
   // News. Deliberately isolated and last: it is the only job that depends on a
@@ -108,10 +110,18 @@ export async function runTick({ force = null } = {}) {
   // one club's feed is pulled alongside it, rotating through all 32 — that
   // deepens the archive to roughly a full lap every eight hours and is what
   // makes per-player history exist at all.
-  if (force === 'news' || force === null) {
+  // Hourly, not every tick. Headlines do not turn over in fifteen minutes, and
+  // each pass upserts ~50 articles plus their player tags — four times an hour
+  // was a meaningful slice of the daily write allowance for no visible gain.
+  const newsKey = 'news'
+  const newsEntry = await getSyncEntry(newsKey)
+  const newsDue =
+    !newsEntry || newsEntry.last_run_at < new Date(Date.now() - 3_600_000).toISOString()
+
+  if (force === 'news' || (force === null && newsDue)) {
     try {
       const league = await ingestNews()
-      const index = Math.floor(Date.now() / 900_000) % TEAM_ROTATION.length
+      const index = Math.floor(Date.now() / 3_600_000) % TEAM_ROTATION.length
       const team = await ingestNews({ team: TEAM_ROTATION[index] })
       await recordSync('news', 'ok', `league ${league.stored}/${league.tagged} tagged, ${team.team} ${team.stored}`)
       ran.push({ job: 'news', league: league.stored, team: team.team, tagged: league.tagged + team.tagged })

@@ -153,11 +153,33 @@ async function prunePlayers(keepIds) {
 }
 
 /** Pull one week of stat lines. Points are computed later from league scoring. */
+/**
+ * Keep only the rows whose stat line actually differs from what's stored.
+ *
+ * D1 counts an UPDATE as a write whether or not the value changed, and the
+ * daily write allowance is 50x smaller than the read allowance — so reading
+ * the current rows to avoid rewriting identical ones is a very good trade.
+ * Most of a Sunday's syncs touch a few dozen players, not eight hundred.
+ */
+async function onlyChanged(table, season, seasonType, week, entries) {
+  const existing = new Map(
+    (
+      await query(
+        `SELECT player_id, stats_json FROM ${table}
+          WHERE season = @season AND season_type = @seasonType AND week = @week`,
+        { season, seasonType, week },
+      )
+    ).map((r) => [r.player_id, r.stats_json]),
+  )
+  return entries.filter(([playerId, line]) => existing.get(playerId) !== JSON.stringify(line ?? {}))
+}
+
 export async function syncWeekStats(season, week, seasonType = 'regular') {
   const stats = await fetchWeekStats(season, week, seasonType)
   const knownIds = new Set((await query('SELECT id FROM players')).map((r) => r.id))
 
-  const entries = Object.entries(stats || {}).filter(([playerId]) => knownIds.has(playerId))
+  const all = Object.entries(stats || {}).filter(([playerId]) => knownIds.has(playerId))
+  const entries = await onlyChanged('player_stats', season, seasonType, week, all)
   for (let i = 0; i < entries.length; i += CHUNK) {
     await batch(
       entries.slice(i, i + CHUNK).map(([playerId, line]) =>
@@ -172,8 +194,12 @@ export async function syncWeekStats(season, week, seasonType = 'regular') {
     )
   }
 
-  await recordSync(`stats:${season}:${seasonType}:${week}`, 'ok', `${entries.length} stat lines`)
-  return { count: entries.length }
+  await recordSync(
+    `stats:${season}:${seasonType}:${week}`,
+    'ok',
+    `${entries.length} changed of ${all.length}`,
+  )
+  return { count: entries.length, unchanged: all.length - entries.length }
 }
 
 /**
@@ -189,10 +215,11 @@ export async function syncWeekProjections(season, week, seasonType = 'regular') 
   const projections = await fetchJson(`${baseUrl}/projections/${sport}/${seasonType}/${season}/${week}`)
 
   const knownIds = new Set((await query('SELECT id FROM players')).map((r) => r.id))
+  const all = Object.entries(projections || {}).filter(([playerId]) => knownIds.has(playerId))
+  const changed = await onlyChanged('player_projections', season, seasonType, week, all)
   const writes = []
 
-  for (const [playerId, line] of Object.entries(projections || {})) {
-    if (!knownIds.has(playerId)) continue
+  for (const [playerId, line] of changed) {
     writes.push(
       stmt(
         `INSERT INTO player_projections (player_id, season, season_type, week, stats_json, updated_at)

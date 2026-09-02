@@ -167,7 +167,7 @@ const live = useLive(
     if (saving.value || irBusy.value || lineupDirty.value) return
     await Promise.all([loadAll({ quiet: true }), league.refreshLocks()])
   },
-  { intervalMs: 20000, immediate: false },
+  { intervalMs: 60000, immediate: false },
 )
 
 onMounted(loadAll)

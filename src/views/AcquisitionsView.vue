@@ -200,7 +200,7 @@ const live = useLive(
     await Promise.all([loadAll(), league.refreshLocks()])
     searchRef.value?.reload()
   },
-  { intervalMs: 20000, immediate: false },
+  { intervalMs: 45000, immediate: false },
 )
 
 onMounted(loadAll)

@@ -123,7 +123,7 @@ const live = useLive(
       error.value = err.message
     }
   },
-  { intervalMs: 60_000 },
+  { intervalMs: 180_000 },
 )
 
 // A minute is plenty for news — it is not a live scoreboard, and the ingest

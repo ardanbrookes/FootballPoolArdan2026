@@ -56,13 +56,10 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
   // player's number should read as a score or a projection.
   const nflWeek = locks.activeWeek ?? week
 
-  const [points, projections, restOfSeason, games, rostered, lineup] = await Promise.all([
-    getWeekPoints(season, week),
-    getWeekProjections(season, week),
-    // Carried here as well as on /rosters so the trade builder shows the same
-    // number for your own players as it does for the other team's.
-    getRestOfSeasonPoints(season, week, playoffs.regularSeasonWeeks),
-    getTeamGameStatus(season, nflWeek).catch(() => new Map()),
+  // The roster is fetched first so every scoring lookup can be scoped to these
+  // ~17 players. Loading the whole week's stats and projections to score one
+  // roster was reading around 900 rows a request, on a page that polls.
+  const [rostered, lineup] = await Promise.all([
     query(
       `SELECT p.id, p.full_name, p.position, p.fantasy_positions, p.nfl_team, p.injury_status,
               p.status, p.bye_week, p.jersey_number, rp.acquired_at, rp.acquired_via, rp.on_ir,
@@ -77,6 +74,18 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
         WHERE league_id = @leagueId AND team_id = @teamId AND season = @season AND week = @week`,
       { leagueId, teamId, season, week },
     ),
+  ])
+
+  const rosterIds = rostered.map((p) => p.id)
+  const scope = { playerIds: rosterIds }
+
+  const [points, projections, restOfSeason, games] = await Promise.all([
+    getWeekPoints(season, week, 'regular', undefined, scope),
+    getWeekProjections(season, week, 'regular', undefined, scope),
+    // Carried here as well as on /rosters so the trade builder shows the same
+    // number for your own players as it does for the other team's.
+    getRestOfSeasonPoints(season, week, playoffs.regularSeasonWeeks, 'regular', undefined, scope),
+    getTeamGameStatus(season, nflWeek).catch(() => new Map()),
   ])
 
   const slotByPlayer = new Map(lineup.filter((l) => l.player_id).map((l) => [l.player_id, l.slot]))

@@ -291,13 +291,24 @@ router.get('/rosters', async (c) => {
   // Rest-of-season projection is what a trade actually turns on, and bench
   // players need their score too — the League page was showing a blank column
   // for everyone not starting.
+  // Scoped to players actually on a roster — about 130, rather than every
+  // player in the league's stats table.
+  const rosteredIds = (
+    await query('SELECT player_id FROM roster_players WHERE league_id = @leagueId', {
+      leagueId: league.id,
+    })
+  ).map((r) => r.player_id)
+  const scope = { playerIds: rosteredIds }
+
   const [weekPoints, ros] = await Promise.all([
-    getWeekPoints(league.season, week, league.season_type),
+    getWeekPoints(league.season, week, league.season_type, undefined, scope),
     getRestOfSeasonPoints(
       league.season,
       league.current_week,
       playoffs.regularSeasonWeeks,
       league.season_type,
+      undefined,
+      scope,
     ),
   ])
 

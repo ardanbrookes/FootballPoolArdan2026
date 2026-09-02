@@ -16,8 +16,14 @@ import { useLive, agoLabel } from '@/composables/useLive.js'
 import { gifCategories, stillUrl, animatedUrl, GIF_URL_RE } from '@/data/gifs.js'
 
 const props = defineProps({
-  /** Poll interval in ms. Chat is the one thing people watch, so it's brisk. */
-  pollMs: { type: Number, default: 8000 },
+  /**
+   * Poll interval in ms.
+   *
+   * Chat is the one thing people watch, but every poll is a database read per
+   * open tab — at eight seconds this alone was a large share of the daily read
+   * allowance. Twenty still feels live.
+   */
+  pollMs: { type: Number, default: 20000 },
 })
 
 const messages = ref([])

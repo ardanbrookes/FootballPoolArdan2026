@@ -203,7 +203,7 @@ const live = useLive(
     if (busy.value || building) return
     await loadAll()
   },
-  { intervalMs: 25000, immediate: false },
+  { intervalMs: 60000, immediate: false },
 )
 
 onMounted(loadAll)

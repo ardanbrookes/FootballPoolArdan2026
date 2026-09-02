@@ -29,11 +29,54 @@ export function scoreStatLine(stats, scoringConfig = defaultScoring) {
  * use identical stat keys — so a projection is worth exactly what the same real
  * performance would be under this league's half-PPR rules.
  */
-export async function getWeekProjections(season, week, seasonType = 'regular', scoringConfig = defaultScoring) {
-  const rows = await query(
+/**
+ * D1 caps a statement at 100 bound parameters, so a player-id filter is applied
+ * in chunks and the results merged.
+ */
+const ID_CHUNK = 90
+
+/**
+ * Build a "WHERE ... AND player_id IN (...)" filter, or no filter at all.
+ *
+ * Scoping these lookups to the players a request actually cares about is the
+ * single biggest saving in the app. Loading the whole week's table to score one
+ * roster read ~900 rows per request; a roster needs 17.
+ */
+function idFilter(ids, offset = 0) {
+  const params = {}
+  const keys = ids.map((id, i) => {
+    params[`id${offset + i}`] = id
+    return `@id${offset + i}`
+  })
+  return { clause: `AND player_id IN (${keys.join(', ')})`, params }
+}
+
+/** Run a stats/projections query once per id chunk, or once unfiltered. */
+async function selectStatRows(sql, base, playerIds) {
+  if (!playerIds) return query(sql.replace('/**IDS**/', ''), base)
+  const ids = [...new Set(playerIds)].filter(Boolean)
+  if (!ids.length) return []
+
+  const rows = []
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { clause, params } = idFilter(ids.slice(i, i + ID_CHUNK))
+    rows.push(...(await query(sql.replace('/**IDS**/', clause), { ...base, ...params })))
+  }
+  return rows
+}
+
+export async function getWeekProjections(
+  season,
+  week,
+  seasonType = 'regular',
+  scoringConfig = defaultScoring,
+  { playerIds = null } = {},
+) {
+  const rows = await selectStatRows(
     `SELECT player_id, stats_json FROM player_projections
-      WHERE season = @season AND season_type = @seasonType AND week = @week`,
+      WHERE season = @season AND season_type = @seasonType AND week = @week /**IDS**/`,
     { season, seasonType, week },
+    playerIds,
   )
 
   const points = new Map()
@@ -47,11 +90,18 @@ export async function getWeekProjections(season, week, seasonType = 'regular', s
   return points
 }
 
-export async function getWeekPoints(season, week, seasonType = 'regular', scoringConfig = defaultScoring) {
-  const rows = await query(
+export async function getWeekPoints(
+  season,
+  week,
+  seasonType = 'regular',
+  scoringConfig = defaultScoring,
+  { playerIds = null } = {},
+) {
+  const rows = await selectStatRows(
     `SELECT player_id, stats_json FROM player_stats
-      WHERE season = @season AND season_type = @seasonType AND week = @week`,
+      WHERE season = @season AND season_type = @seasonType AND week = @week /**IDS**/`,
     { season, seasonType, week },
+    playerIds,
   )
   const points = new Map()
   for (const row of rows) {
@@ -85,17 +135,21 @@ export async function getPlayerPoints(playerId, season, week, seasonType = 'regu
  * configured slot so empty slots are visible in the UI.
  */
 export async function getLineupWithPoints(leagueId, teamId, season, week, seasonType = 'regular') {
-  const [rows, points, projections] = await Promise.all([
-    query(
-      `SELECT l.slot, l.player_id, p.full_name, p.position, p.nfl_team, p.injury_status, p.bye_week
-         FROM lineups l
-         LEFT JOIN players p ON p.id = l.player_id
-        WHERE l.league_id = @leagueId AND l.team_id = @teamId
-          AND l.season = @season AND l.week = @week`,
-      { leagueId, teamId, season, week },
-    ),
-    getWeekPoints(season, week, seasonType),
-    getWeekProjections(season, week, seasonType),
+  // Lineup first, so scoring is scoped to at most nine players rather than
+  // every player in the league.
+  const rows = await query(
+    `SELECT l.slot, l.player_id, p.full_name, p.position, p.nfl_team, p.injury_status, p.bye_week
+       FROM lineups l
+       LEFT JOIN players p ON p.id = l.player_id
+      WHERE l.league_id = @leagueId AND l.team_id = @teamId
+        AND l.season = @season AND l.week = @week`,
+    { leagueId, teamId, season, week },
+  )
+
+  const scope = { playerIds: rows.map((r) => r.player_id).filter(Boolean) }
+  const [points, projections] = await Promise.all([
+    getWeekPoints(season, week, seasonType, defaultScoring, scope),
+    getWeekProjections(season, week, seasonType, defaultScoring, scope),
   ])
 
   const bySlot = new Map(rows.map((r) => [r.slot, r]))
@@ -261,12 +315,14 @@ export async function getRestOfSeasonPoints(
   toWeek,
   seasonType = 'regular',
   scoringConfig = defaultScoring,
+  { playerIds = null } = {},
 ) {
-  const rows = await query(
+  const rows = await selectStatRows(
     `SELECT player_id, stats_json FROM player_projections
       WHERE season = @season AND season_type = @seasonType
-        AND week >= @fromWeek AND week <= @toWeek`,
+        AND week >= @fromWeek AND week <= @toWeek /**IDS**/`,
     { season, seasonType, fromWeek, toWeek },
+    playerIds,
   )
 
   const totals = new Map()

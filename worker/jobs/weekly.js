@@ -169,17 +169,43 @@ async function carryForwardLineup(leagueId, teamId, season, fromWeek, toWeek) {
   )
 }
 
+/**
+ * Is there any football to sync right now?
+ *
+ * The tick fires every 15 minutes all week, but stats only change while games
+ * are being played. Refreshing on a Wednesday rewrote every stat line for
+ * nothing — roughly 1,600 writes a tick, 96 ticks a day, which on its own blew
+ * past the daily write limit.
+ *
+ * The window is deliberately generous: any game that kicked off in the last six
+ * hours, or is still marked in progress. That covers a game running long and
+ * the settling of final stats afterwards.
+ */
+async function hasLiveFootball(season, week, seasonType) {
+  const since = new Date(Date.now() - 6 * 3600_000).toISOString()
+  const row = await get(
+    `SELECT COUNT(*) AS n FROM nfl_games
+      WHERE season = @season AND week = @week AND season_type = @seasonType
+        AND (status = 'in_progress' OR (kickoff_at <= @now AND kickoff_at >= @since))`,
+    { season, week, seasonType, now: new Date().toISOString(), since },
+  )
+  return (row?.n ?? 0) > 0
+}
+
 /** Refresh live stats for the current week and re-score matchups. */
-export async function runStatsRefresh({ leagueId } = {}) {
+export async function runStatsRefresh({ leagueId, force = false } = {}) {
   const results = []
 
   for (const league of await leaguesFor(leagueId)) {
     try {
-      // Projections alongside stats: they're the same endpoint shape and the
-      // player pool wants next week's number next to this week's result.
-      await syncWeekProjections(league.season, league.current_week, league.season_type).catch((err) =>
-        console.warn(`[stats] projections unavailable for week ${league.current_week}: ${err.message}`),
-      )
+      // Projections are NOT refreshed here any more. They move about once a
+      // day, not every 15 minutes, and the daily sync already covers the
+      // current week as part of the rest-of-season pass.
+      if (!force && !(await hasLiveFootball(league.season, league.current_week, league.season_type))) {
+        results.push({ leagueId: league.id, skipped: 'no games in progress' })
+        continue
+      }
+
       const stats = await syncWeekStats(league.season, league.current_week, league.season_type)
       await recalculateMatchups(league.id, league.season, league.current_week)
       results.push({ leagueId: league.id, statLines: stats.count })
