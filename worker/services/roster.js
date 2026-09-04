@@ -208,9 +208,14 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
  * Locked players can't change position: a player who has already kicked off can
  * neither be benched nor started, and the slot they occupy is frozen.
  */
-export async function setLineup(leagueId, teamId, season, week, assignments) {
+export async function setLineup(leagueId, teamId, season, week, assignments, { bypassLocks = false } = {}) {
   const locks = await getLockState(leagueId)
-  assertAllowed(locks, 'lineup', `${locks.phaseLabel} — lineups can't be changed right now.`)
+  // The commissioner sets lineups after kickoff on purpose — fixing a lineup
+  // someone couldn't set, or reversing a mistake. Every other caller is a
+  // manager acting on their own team and stays inside the lock rules.
+  if (!bypassLocks) {
+    assertAllowed(locks, 'lineup', `${locks.phaseLabel} — lineups can't be changed right now.`)
+  }
 
   const [rosteredRows, currentRows] = await Promise.all([
     query(
@@ -275,7 +280,7 @@ export async function setLineup(leagueId, teamId, season, week, assignments) {
     for (const playerId of [before, after]) {
       if (!playerId) continue
       const player = rostered.get(playerId) || (await get('SELECT * FROM players WHERE id = @id', { id: playerId }))
-      if (player) assertPlayerMovable(locks, player, 'move')
+      if (player && !bypassLocks) assertPlayerMovable(locks, player, 'move')
     }
   }
 

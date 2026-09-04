@@ -32,14 +32,17 @@ async function signOut() {
   await session.logout()
 }
 
-const navItems = [
+const navItems = computed(() => [
   { to: '/', label: 'Home' },
   { to: '/league', label: 'League' },
   { to: '/acquisitions', label: 'Acquisitions' },
   { to: '/trades', label: 'Trades' },
   { to: '/news', label: 'News' },
   { to: '/rules', label: 'Rules' },
-]
+  // Only the commissioner sees the tab. The endpoints behind it are gated
+  // server-side too — hiding the link is a courtesy, not the access control.
+  ...(session.user?.isCommissioner ? [{ to: '/commissioner', label: 'Commissioner' }] : []),
+])
 
 const deadline = computed(() => league.lockState?.nextDeadline)
 

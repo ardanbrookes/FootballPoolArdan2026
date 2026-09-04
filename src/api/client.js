@@ -97,6 +97,27 @@ export const api = {
   respondToTrade: (tradeId, accept, message) =>
     request('POST', `/league/trades/${tradeId}/respond`, { accept, message }),
   cancelTrade: (tradeId) => request('POST', `/league/trades/${tradeId}/cancel`),
+
+  // Commissioner console
+  commish: {
+    overview: (week) => request('GET', `/league/commissioner/overview${qs({ week })}`),
+    movePlayer: (playerId, toTeamId, opts = {}) =>
+      request('POST', '/league/commissioner/roster/move', { playerId, toTeamId, ...opts }),
+    setIr: (playerId, onIr) => request('POST', '/league/commissioner/roster/ir', { playerId, onIr }),
+    setLineup: (teamId, assignments, week) =>
+      request('PUT', '/league/commissioner/roster/lineup', { teamId, assignments, week }),
+    setPoolStatus: (playerId, status, clearAt) =>
+      request('POST', '/league/commissioner/pool/status', { playerId, status, clearAt }),
+    setScore: (matchupId, homeScore, awayScore, status) =>
+      request('POST', '/league/commissioner/scores', { matchupId, homeScore, awayScore, status }),
+    clearScore: (matchupId) => request('POST', '/league/commissioner/scores/clear', { matchupId }),
+    recalculate: (week, markFinal) =>
+      request('POST', '/league/commissioner/scores/recalculate', { week, markFinal }),
+    undoTransaction: (transactionId) =>
+      request('POST', '/league/commissioner/undo/transaction', { transactionId }),
+    undoTrade: (tradeId) => request('POST', '/league/commissioner/undo/trade', { tradeId }),
+    setWeek: (week) => request('POST', '/league/commissioner/week', { week }),
+  },
 }
 
 export default api

@@ -7,6 +7,11 @@ const routes = [
   { path: '/news', name: 'news', component: () => import('@/views/NewsView.vue') },
   { path: '/league', name: 'league', component: () => import('@/views/LeagueView.vue') },
   { path: '/rules', name: 'rules', component: () => import('@/views/RulesView.vue') },
+  {
+    path: '/commissioner',
+    name: 'commissioner',
+    component: () => import('@/views/CommissionerView.vue'),
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

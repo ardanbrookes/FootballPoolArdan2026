@@ -189,12 +189,19 @@ export async function scoreTeamWeek(leagueId, teamId, season, week, points) {
   return Math.round(total * 100) / 100
 }
 
-/** Recompute both scores for every matchup in a week. */
+/**
+ * Recompute both scores for every matchup in a week.
+ *
+ * Matchups the commissioner has scored by hand are left alone — see
+ * `manual_override` in migration 0007. Otherwise the next stats refresh would
+ * quietly undo the correction.
+ */
 export async function recalculateMatchups(leagueId, season, week, { markFinal = false } = {}) {
   const [matchups, points] = await Promise.all([
     query(
       `SELECT id, home_team_id, away_team_id FROM matchups
-        WHERE league_id = @leagueId AND season = @season AND week = @week`,
+        WHERE league_id = @leagueId AND season = @season AND week = @week
+          AND manual_override = 0`,
       { leagueId, season, week },
     ),
     getWeekPoints(season, week),
