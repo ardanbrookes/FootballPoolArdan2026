@@ -100,21 +100,6 @@ async function toggleBlock(player) {
 const theirListings = computed(() => listings.value.filter((l) => l.teamId !== myTeamId.value))
 
 /**
- * Rest-of-season projected points on each side of the offer.
- *
- * The number a trade actually turns on. Next week's projection says nothing
- * about whether giving up a running back for the rest of the run is sensible.
- */
-const rosOf = (players, ids) =>
-  Math.round(
-    players.filter((p) => ids.includes(p.id)).reduce((sum, p) => sum + (p.restOfSeasonPoints ?? 0), 0) * 10,
-  ) / 10
-
-const giveRos = computed(() => rosOf(myPlayers.value, give.value))
-const receiveRos = computed(() => rosOf(theirPlayers.value, receive.value))
-const rosSwing = computed(() => Math.round((receiveRos.value - giveRos.value) * 10) / 10)
-
-/**
  * Add/remove a player from one side of the offer.
  *
  * Takes the side by name rather than the ref itself: Vue unwraps top-level refs
@@ -258,10 +243,7 @@ onMounted(loadAll)
 
         <div class="builder">
           <div>
-            <h3 class="small bold ros-head">
-              You send
-              <span v-if="give.length" class="tiny faint">{{ giveRos.toFixed(0) }} pts ROS</span>
-            </h3>
+            <h3 class="small bold">You send</h3>
             <div class="picker-list">
               <div v-for="player in myPlayers" :key="player.id" class="pick-row">
                 <button
@@ -295,10 +277,7 @@ onMounted(loadAll)
           </div>
 
           <div>
-            <h3 class="small bold ros-head">
-              You receive
-              <span v-if="receive.length" class="tiny faint">{{ receiveRos.toFixed(0) }} pts ROS</span>
-            </h3>
+            <h3 class="small bold">You receive</h3>
             <div v-if="!partnerId" class="empty small">Pick a team to see their roster.</div>
             <div v-else class="picker-list">
               <button
@@ -327,10 +306,6 @@ onMounted(loadAll)
         </div>
 
         <div class="row submit-row">
-          <span v-if="give.length || receive.length" class="tiny swing" :class="{ up: rosSwing > 0 }">
-            {{ rosSwing > 0 ? '+' : '' }}{{ rosSwing.toFixed(0) }} pts rest of season for you
-          </span>
-          <span v-else />
           <button class="btn btn-ghost btn-sm" @click="resetBuilder">Clear</button>
           <button class="btn btn-primary btn-sm" :disabled="!canSubmit" @click="propose">Send offer</button>
         </div>
@@ -458,6 +433,10 @@ onMounted(loadAll)
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
+}
+
+.builder h3 {
+  margin-bottom: 0.5rem;
 }
 
 @media (max-width: 700px) {
@@ -591,18 +570,10 @@ onMounted(loadAll)
 .submit-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.75rem;
   flex-wrap: wrap;
-}
-
-.swing {
-  color: var(--warn);
-}
-
-.swing.up {
-  color: var(--accent-hover);
 }
 
 .ros {
@@ -615,13 +586,5 @@ onMounted(loadAll)
 
 .pick.selected .ros {
   color: var(--accent-hover);
-}
-
-.ros-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
 }
 </style>
