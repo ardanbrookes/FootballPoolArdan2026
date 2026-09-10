@@ -60,6 +60,10 @@ export async function runWaiverProcessing({ leagueId } = {}) {
     } catch (err) {
       console.error(`[waivers] league ${league.id} failed:`, err.message)
       await recordSync(`waivers:${league.id}`, 'error', err.message)
+      // Reported rather than swallowed, so the tick leaves this boundary
+      // unmarked and tries again. Swallowing it marked the run done, which
+      // would have left every unrostered player on waivers for a whole week.
+      results.push({ leagueId: league.id, error: err.message })
     }
   }
 
@@ -107,6 +111,11 @@ export async function runPoolClose({ leagueId } = {}) {
  * lineup rows — which is what reopens rosters and trades. The player pool is
  * left alone here; it was closed at the Sunday lock and reopens on Tuesday when
  * claims process.
+ *
+ * Advancing the week is the LAST step, and it's the commit point. Everything
+ * before it is idempotent against the same finished week, so a run that fails
+ * part-way simply redoes it on retry. With the advance in the middle, a retry
+ * after a mid-way failure would have finalised the week after instead.
  */
 export async function runWeekReset({ leagueId } = {}) {
   const results = []
@@ -118,19 +127,27 @@ export async function runWeekReset({ leagueId } = {}) {
     await recalculateMatchups(league.id, league.season, finishedWeek, { markFinal: true })
     await recalculateStandings(league.id, league.season)
 
-    await run('UPDATE leagues SET current_week = @nextWeek WHERE id = @leagueId', {
-      nextWeek,
-      leagueId: league.id,
-    })
-
     const teams = await query('SELECT id FROM teams WHERE league_id = @leagueId', { leagueId: league.id })
     for (const team of teams) {
       await ensureLineupRows(league.id, team.id, league.season, nextWeek)
       await carryForwardLineup(league.id, team.id, league.season, finishedWeek, nextWeek)
     }
 
+    // Compare-and-set: two runs racing (a manual reset landing during a tick)
+    // can't advance the league twice.
+    const advanced = await run(
+      `UPDATE leagues SET current_week = @nextWeek
+        WHERE id = @leagueId AND current_week = @finishedWeek`,
+      { nextWeek, finishedWeek, leagueId: league.id },
+    )
+    if (!advanced?.changes) {
+      results.push({ leagueId: league.id, finishedWeek, skipped: 'week had already advanced' })
+      continue
+    }
+
     // Entering the playoffs: seed the bracket. No-op during the regular season,
-    // and idempotent once created.
+    // and idempotent once created. After the advance, because it keys off the
+    // league's new week.
     const bracket = await ensurePlayoffMatchups(league.id)
     if (bracket.created) {
       console.log(`[week-reset] league ${league.id}: bracket set — ${bracket.detail.join('; ')}`)
@@ -151,7 +168,15 @@ export async function runWeekReset({ leagueId } = {}) {
   return results
 }
 
-/** Copy a team's lineup from one week to the next, skipping anyone no longer rostered. */
+/**
+ * Start next week's lineup as a copy of the one just played, skipping anyone
+ * no longer rostered.
+ *
+ * Overwrites rather than filling gaps: the reset is the authority on what next
+ * week starts from. Filling only empty slots let an early copy survive the real
+ * reset, handing a team a lineup days out of date — including players it had
+ * since dropped.
+ */
 async function carryForwardLineup(leagueId, teamId, season, fromWeek, toWeek) {
   const previous = await query(
     `SELECT l.slot, l.player_id FROM lineups l
@@ -161,16 +186,22 @@ async function carryForwardLineup(leagueId, teamId, season, fromWeek, toWeek) {
     { leagueId, teamId, season, fromWeek },
   )
 
-  await batch(
-    previous.map((row) =>
+  // One batch, so the clear and the copy land together.
+  await batch([
+    stmt(
+      `UPDATE lineups SET player_id = NULL
+        WHERE league_id = @leagueId AND team_id = @teamId AND season = @season AND week = @toWeek`,
+      { leagueId, teamId, season, toWeek },
+    ),
+    ...previous.map((row) =>
       stmt(
         `UPDATE lineups SET player_id = @playerId
           WHERE league_id = @leagueId AND team_id = @teamId AND season = @season
-            AND week = @toWeek AND slot = @slot AND player_id IS NULL`,
+            AND week = @toWeek AND slot = @slot`,
         { leagueId, teamId, season, toWeek, slot: row.slot, playerId: row.player_id },
       ),
     ),
-  )
+  ])
 }
 
 /**
@@ -182,21 +213,31 @@ async function carryForwardLineup(leagueId, teamId, season, fromWeek, toWeek) {
  * past the daily write limit.
  *
  * The window is deliberately generous: any game that kicked off in the last six
- * hours, or is still marked in progress. That covers a game running long and
- * the settling of final stats afterwards.
+ * hours, which covers a game running long and final stats settling afterwards.
+ * A game ESPN still reports as in progress counts too, but only for twelve
+ * hours — a status left stuck by a failed sync must not keep the refresh (and
+ * its reads) running for the rest of the week.
  */
 async function hasLiveFootball(season, week, seasonType) {
-  const since = new Date(Date.now() - 6 * 3600_000).toISOString()
+  const nowMs = Date.now()
   const row = await get(
     `SELECT COUNT(*) AS n FROM nfl_games
       WHERE season = @season AND week = @week AND season_type = @seasonType
-        AND (status = 'in_progress' OR (kickoff_at <= @now AND kickoff_at >= @since))`,
-    { season, week, seasonType, now: new Date().toISOString(), since },
+        AND kickoff_at <= @now
+        AND (kickoff_at >= @since OR (status = 'in_progress' AND kickoff_at >= @stale))`,
+    {
+      season,
+      week,
+      seasonType,
+      now: new Date(nowMs).toISOString(),
+      since: new Date(nowMs - 6 * 3600_000).toISOString(),
+      stale: new Date(nowMs - 12 * 3600_000).toISOString(),
+    },
   )
   return (row?.n ?? 0) > 0
 }
 
-/** Refresh live stats for the current week and re-score matchups. */
+/** Refresh live stats and game status for the current week, then re-score matchups. */
 export async function runStatsRefresh({ leagueId, force = false } = {}) {
   const results = []
 
@@ -210,9 +251,21 @@ export async function runStatsRefresh({ leagueId, force = false } = {}) {
         continue
       }
 
+      // Real game status while games are on — kickoffs, overtime, finals — so
+      // scoreboards can say LIVE and FINAL. Best effort: services/schedule.js
+      // derives a status from the kickoff time whenever this hasn't landed.
+      const schedule = await syncWeek(league.season, league.current_week, league.season_type).catch(
+        (err) => ({ error: err.message }),
+      )
+
       const stats = await syncWeekStats(league.season, league.current_week, league.season_type)
       await recalculateMatchups(league.id, league.season, league.current_week)
-      results.push({ leagueId: league.id, statLines: stats.count })
+      results.push({
+        leagueId: league.id,
+        statLines: stats.count,
+        games: schedule.games ?? null,
+        ...(schedule.error ? { scheduleError: schedule.error } : {}),
+      })
     } catch (err) {
       console.error(`[stats] league ${league.id} refresh failed:`, err.message)
     }

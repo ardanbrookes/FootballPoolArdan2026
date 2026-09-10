@@ -181,3 +181,37 @@ export async function resetPoolToWaivers(leagueId, clearAtIso) {
 
   return { count: unrostered.length }
 }
+
+/**
+ * Put every unrostered player on the given NFL teams on waivers.
+ *
+ * Called as each pre-Sunday game kicks off. A player whose game has started
+ * is locked, so as a "free agent" nobody could actually add him — he sat in
+ * limbo until the Sunday lock moved everyone to waivers. On waivers he can be
+ * claimed straight away, resolving at the next processing run like any other
+ * claim.
+ *
+ * Players already on waivers keep their clear time; only free agents move.
+ */
+export async function placeTeamsOnWaivers(leagueId, nflTeams, clearAtIso) {
+  if (!nflTeams.length) return { count: 0 }
+
+  const params = { leagueId, clearAt: clearAtIso, now: nowIso() }
+  const placeholders = nflTeams.map((team, i) => {
+    params[`team${i}`] = team
+    return `@team${i}`
+  })
+
+  const result = await run(
+    `INSERT INTO player_pool_state (league_id, player_id, waivers_clear_at, updated_at)
+     SELECT @leagueId, p.id, @clearAt, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       FROM players p
+       LEFT JOIN roster_players rp ON rp.player_id = p.id AND rp.league_id = @leagueId
+      WHERE p.nfl_team IN (${placeholders.join(', ')}) AND rp.team_id IS NULL
+     ON CONFLICT (league_id, player_id)
+     DO UPDATE SET waivers_clear_at = excluded.waivers_clear_at, updated_at = excluded.updated_at
+      WHERE player_pool_state.waivers_clear_at IS NULL OR player_pool_state.waivers_clear_at <= @now`,
+    params,
+  )
+  return { count: result?.changes ?? 0 }
+}

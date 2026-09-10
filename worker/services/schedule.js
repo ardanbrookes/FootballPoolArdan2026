@@ -5,15 +5,17 @@
  * v1 API doesn't expose a schedule (`/schedule/nfl/regular/{season}` 404s), so
  * kickoff times come from ESPN's public scoreboard endpoint.
  *
- * IMPORTANT: ESPN returns 403 to requests originating from workerd, so these
- * functions generally FAIL in production. Identical requests from Node succeed,
- * and Sleeper works fine from the Worker, so this is ESPN bot-detection on the
- * TLS fingerprint rather than anything headers can fix.
+ * The host matters. `site.api.espn.com` returns 403 to requests from workerd —
+ * bot detection on the TLS fingerprint, not something headers can fix — while
+ * `site.web.api.espn.com` serves the identical payload and works (the same
+ * finding as services/news.js). On the old host every sync in production
+ * failed, so every game sat at 'scheduled' however long ago it was played.
  *
- * The schedule of record is therefore loaded from a generated SQL file — see
- * scripts/build-schedule.mjs — and this module is kept only as a best-effort
- * refresh for live game status. Callers must tolerate it throwing; nothing that
- * matters depends on it succeeding.
+ * The schedule of record is loaded from a generated SQL file — see
+ * scripts/build-schedule.mjs — so this module only refreshes live game status.
+ * Callers must tolerate it throwing. Nothing reads a raw status either:
+ * `getWeekGames` blends it with the kickoff time, so a bad day at ESPN costs
+ * the LIVE/FINAL labels some precision rather than breaking the scoreboard.
  *
  * Team codes are normalised to Sleeper's abbreviations so `nfl_games.home_team`
  * always joins cleanly against `players.nfl_team`.
@@ -21,13 +23,17 @@
 
 import { query, batch, stmt } from '../db.js'
 import { recordSync } from './sleeper.js'
+import { GAME_DURATION_HOURS } from '../config.js'
 
-const ESPN_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
+const ESPN_SCOREBOARD = 'https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
 
 /** ESPN abbreviation -> Sleeper abbreviation. Only the ones that differ. */
 const TEAM_CODE_MAP = { WSH: 'WAS' }
 
 const SEASON_TYPE_TO_ESPN = { preseason: 1, regular: 2, post: 3, postseason: 3 }
+
+/** How long ESPN's word that a game is live outranks the clock. */
+const LIVE_REPORT_TRUST_HOURS = 6
 
 export function normalizeTeam(code) {
   if (!code) return null
@@ -54,9 +60,6 @@ async function fetchWeek(season, week, seasonType) {
   const res = await fetch(url, {
     headers: {
       accept: 'application/json',
-      // ESPN 403s workerd's default user-agent. A browser-shaped one is
-      // accepted; without this every schedule sync silently returns zero games
-      // and the Thursday-night lock has nothing to key off.
       'user-agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     },
@@ -65,7 +68,13 @@ async function fetchWeek(season, week, seasonType) {
   return res.json()
 }
 
-/** Sync a single week's games. */
+/**
+ * Sync a single week's games.
+ *
+ * Only rows that actually changed are written. This runs every 15 minutes
+ * while games are on, and rewriting sixteen unchanged rows each time would be
+ * write allowance spent on nothing.
+ */
 export async function syncWeek(season, week, seasonType = 'regular') {
   const data = await fetchWeek(season, week, seasonType)
   const writes = []
@@ -89,7 +98,9 @@ export async function syncWeek(season, week, seasonType = 'regular') {
          ON CONFLICT (season, season_type, week, home_team, away_team)
          DO UPDATE SET kickoff_at = excluded.kickoff_at,
                        status = excluded.status,
-                       updated_at = excluded.updated_at`,
+                       updated_at = excluded.updated_at
+          WHERE nfl_games.status != excluded.status
+             OR nfl_games.kickoff_at != excluded.kickoff_at`,
         {
           season,
           seasonType,
@@ -131,6 +142,27 @@ export async function syncSeason(season, { seasonType = 'regular', fromWeek = 1,
 }
 
 /**
+ * A game's status: ESPN's where it has spoken, the clock's where it hasn't.
+ *
+ * The stored status only moves when a sync succeeds, and for a while none did —
+ * a game finished on Wednesday still read 'scheduled' on Thursday, so every
+ * player in it showed a projection instead of a score. Kickoff times are
+ * reliable, so past kickoff a game is live and past a normal game's length it
+ * is over. A live report from ESPN outranks that for a few hours, covering
+ * overtime and weather delays; after that, a status still stuck on live is a
+ * sync that stopped, not a game that didn't.
+ */
+export function effectiveStatus(game, nowMs = Date.now()) {
+  if (game.status === 'final') return 'final'
+  const kickoff = Date.parse(game.kickoff_at)
+  if (!Number.isFinite(kickoff) || nowMs < kickoff) return 'scheduled'
+
+  const hours = (nowMs - kickoff) / 3_600_000
+  if (game.status === 'in_progress' && hours < LIVE_REPORT_TRUST_HOURS) return 'in_progress'
+  return hours < GAME_DURATION_HOURS ? 'in_progress' : 'final'
+}
+
+/**
  * Where each NFL team's game stands this week, keyed by team abbreviation.
  *
  * Powers the Sunday scoreboard: a player's score only means something alongside
@@ -160,12 +192,15 @@ export async function getTeamGameStatus(season, week, seasonType = 'regular') {
   return byTeam
 }
 
-export function getWeekGames(season, week, seasonType = 'regular') {
-  return query(
+/** A week's games, each carrying its effective status rather than the stored one. */
+export async function getWeekGames(season, week, seasonType = 'regular') {
+  const games = await query(
     `SELECT id, week, home_team, away_team, kickoff_at, status
        FROM nfl_games
       WHERE season = @season AND season_type = @seasonType AND week = @week
       ORDER BY kickoff_at ASC`,
     { season, seasonType, week },
   )
+  const nowMs = Date.now()
+  return games.map((game) => ({ ...game, status: effectiveStatus(game, nowMs) }))
 }

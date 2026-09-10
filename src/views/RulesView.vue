@@ -160,6 +160,12 @@ const scoringGroups = computed(() => {
     <div class="card">
       <div class="card-header"><h2>The weekly cycle</h2></div>
       <div class="card-body">
+        <p class="small muted" style="margin-top: 0">
+          The top bar always shows which period you're in. The <strong>open period</strong> runs from
+          Tuesday's waiver run to the week's first kickoff. The <strong>game period</strong> runs from that
+          first kickoff to Monday night's final whistle — a partial lock first, then from Sunday a full
+          lock. The <strong>waiver period</strong> fills the gap from Monday night to Tuesday's waiver run.
+        </p>
         <ol class="cycle">
           <li>
             <div class="bold small">{{ fmt(timing?.blanketLock) }} — everything locks</div>
@@ -185,12 +191,13 @@ const scoringGroups = computed(() => {
             </p>
           </li>
           <li>
-            <div class="bold small">Thursday kickoff — partial lock</div>
+            <div class="bold small">The week's first kickoff — partial lock</div>
             <p class="small muted">
-              When Thursday Night Football starts, <strong>only the two teams in that game</strong> lock.
-              Every other player stays available for adds, drops and lineup changes right through the
-              weekend. Any other pre-Sunday game (a Black Friday or late-season Saturday fixture) locks its
-              two teams the same way.
+              Usually Thursday night, though week 1 opened on a Wednesday. When a game kicks off,
+              <strong>only the two teams in it</strong> lock. Every other player stays available for adds,
+              drops and lineup changes right up to the Sunday lock. Every pre-Sunday game — a second
+              midweek game, Black Friday, a late-season Saturday — locks its two teams the same way. Their
+              unrostered players go on waivers at kickoff: put in a claim and it resolves on Tuesday.
             </p>
           </li>
         </ol>
@@ -225,8 +232,9 @@ const scoringGroups = computed(() => {
         <div>
           <h3 class="small bold">Free agency</h3>
           <p class="small muted" style="margin: 0.25rem 0 0">
-            Once waivers clear, unclaimed players are first come, first served for the rest of the week.
-            Dropped players go back on waivers rather than straight to free agency.
+            Once waivers clear, unclaimed players are first come, first served — until their team kicks
+            off, when they go back on waivers until the next run. Dropped players go back on waivers
+            rather than straight to free agency.
           </p>
         </div>
       </div>

@@ -125,11 +125,11 @@ router.get('/matchup', requireUser, async (c) => {
   )
   if (!matchup) return c.json({ week, matchup: null })
 
-  // The NFL week the fantasy week is actually playing — the lock engine already
-  // derives this from the schedule, so reuse it rather than assuming they match.
-  const lockState = await getLockState(league.id)
-  const nflWeek = lockState.activeWeek ?? week
-  const gameStatus = await getTeamGameStatus(league.season, nflWeek, league.season_type)
+  // Game status for the same week as the points. Not the lock engine's
+  // activeWeek: from Sunday's lock until Monday's final whistle that is
+  // already next week, so the scoreboard would show every player as not
+  // started while their games were being played.
+  const gameStatus = await getTeamGameStatus(league.season, week, league.season_type)
 
   const side = async (teamId) => {
     const [meta, slots] = await Promise.all([
@@ -176,7 +176,7 @@ router.get('/matchup', requireUser, async (c) => {
 
   return c.json({
     week,
-    nflWeek,
+    nflWeek: week,
     myTeamId: team.id,
     matchup: {
       id: matchup.id,

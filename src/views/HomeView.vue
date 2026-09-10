@@ -28,11 +28,18 @@ const error = ref(null)
 const myTeamId = computed(() => league.myTeam?.id ?? null)
 const lastWeekNumber = computed(() => league.currentWeek - 1)
 
-/** The games that trigger the Thursday-night lock, for the "what locks when" list. */
+/**
+ * Games that kick off before Sunday's lock — the ones that lock their teams
+ * early — for the "what locks when" list.
+ *
+ * Measured against the NEXT Sunday lock. The cycle's own blanketLockAt is the
+ * Sunday just gone, so filtering against it left this list empty in every
+ * phase, even with teams already locked.
+ */
 const earlyGames = computed(() => {
-  const blanket = league.lockState?.cycle?.blanketLockAt
-  if (!blanket) return []
-  return nflGames.value.filter((g) => g.kickoff_at < blanket)
+  const nextLock = league.lockState?.cycle?.nextBlanketLockAt
+  if (!nextLock) return []
+  return nflGames.value.filter((g) => g.kickoff_at < nextLock)
 })
 
 const lockedTeams = computed(() => new Set(league.lockState?.lockedNflTeams || []))
@@ -134,23 +141,27 @@ const kickoffLabel = (iso) => formatKickoff(iso, league.config?.timing?.timezone
 /**
  * Put the block that matters right now at the top.
  *
- * The week has three moods, and the four lock phases map onto them:
+ * The week has three moods, and the lock phases map onto them:
  *
  *   waiver_period    Monday night to Tuesday 3am — the week just ended, so you
  *                    want to see how it went. Results first, matchup last.
- *   open / early     Tuesday to Sunday 10am — the week is being built. Roster
- *   game lock        first, matchup next, results last.
- *   blanket_lock     Sunday 10am to Monday's final whistle — nothing can be
- *                    changed, so it's pure spectating. Matchup first.
+ *   open             Tuesday until the week's first kickoff — the week is being
+ *                    built. Roster first, matchup next, results last.
+ *   game period      First kickoff to Monday's final whistle, through both the
+ *                    partial lock (early_game_lock) and the full lock
+ *                    (blanket_lock). Once games are being played the scoreboard
+ *                    is what you came for, so the matchup leads, with the
+ *                    lineup editor right below it for Sunday moves.
  */
 const layout = computed(() => {
   switch (league.phase) {
     case 'waiver_period':
       return ['results', 'roster', 'matchup']
+    case 'early_game_lock':
     case 'blanket_lock':
       return ['matchup', 'roster', 'results']
     default:
-      // open and early_game_lock: managing the roster is the job.
+      // open and preseason: managing the roster is the job.
       return ['roster', 'matchup', 'results']
   }
 })

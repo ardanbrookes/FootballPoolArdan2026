@@ -52,10 +52,6 @@ export function canPlayerFillSlot(player, slotId) {
 export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
   const locks = lockState || (await getLockState(leagueId))
 
-  // The NFL week actually being played, which is what decides whether a
-  // player's number should read as a score or a projection.
-  const nflWeek = locks.activeWeek ?? week
-
   // The roster is fetched first so every scoring lookup can be scoped to these
   // ~17 players. Loading the whole week's stats and projections to score one
   // roster was reading around 900 rows a request, on a page that polls.
@@ -85,7 +81,11 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     // Carried here as well as on /rosters so the trade builder shows the same
     // number for your own players as it does for the other team's.
     getRestOfSeasonPoints(season, week, playoffs.regularSeasonWeeks, 'regular', undefined, scope),
-    getTeamGameStatus(season, nflWeek).catch(() => new Map()),
+    // Same week as the points beside it, so a score and its game state always
+    // agree. Not the lock engine's activeWeek: from Sunday's lock until the
+    // final whistle that is already NEXT week, which showed every player as
+    // not started — against next week's opponent — during the games themselves.
+    getTeamGameStatus(season, week).catch(() => new Map()),
   ])
 
   const slotByPlayer = new Map(lineup.filter((l) => l.player_id).map((l) => [l.player_id, l.slot]))

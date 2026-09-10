@@ -37,6 +37,10 @@ const headline = computed(() => {
     : 'Unrostered players are ON WAIVERS — you can only submit a claim, which resolves at the next processing run.'
 })
 
+/** "NE, SEA and LAR" — once a second early game kicks off, "NE and SEA and LAR" reads badly. */
+const listTeams = (teams) =>
+  teams.length < 2 ? teams.join('') : `${teams.slice(0, -1).join(', ')} and ${teams[teams.length - 1]}`
+
 const detail = computed(() => {
   const state = props.lockState
   if (!state) return ''
@@ -44,15 +48,17 @@ const detail = computed(() => {
 
   switch (state.phase) {
     case 'preseason':
-      return 'The season hasn\'t started, so there are no waivers yet. Free agency stays open until the first Sunday lock.'
+      return 'The season hasn\'t started, so there are no waivers yet. Free agency stays open until the first kickoff.'
     case 'waiver_period':
       return 'Rosters and trades are open. Claims process Tuesday 3:00 AM.'
     case 'open':
       return 'Adds, drops, swaps and lineup changes are all available.'
     case 'early_game_lock':
+      // Not "Thursday night": week 1 opened on a Wednesday, and some weeks
+      // have more than one early game.
       return locked.length
-        ? `Thursday night lock — only ${locked.join(' and ')} are frozen. Everyone else stays open until Sunday.`
-        : 'Thursday night lock is in effect for the teams already playing.'
+        ? `Early-game lock — players on ${listTeams(locked)} are frozen, and any of them who are unrostered are on waivers until Tuesday, so put in a claim. Everyone else stays open until Sunday.`
+        : 'Early-game lock — players whose teams have already kicked off are frozen.'
     case 'blanket_lock':
       return 'Rosters are frozen and trades are closed until the last game of the week finishes. You can still queue claims.'
     default:

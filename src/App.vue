@@ -138,11 +138,15 @@ onUnmounted(() => clearInterval(clockTimer))
               <span class="phase-name" :class="`phase-${league.lockState.phase}`">
                 {{ league.lockState.phaseLabel }}
               </span>
-              <span v-if="deadline" class="countdown mono" :class="{ urgent }">{{ countdown }}</span>
+              <!-- Says what it's counting down to. A bare countdown beside the
+                   phase name read as time left in the phase, so three days of
+                   "Game period" looked like the games ended on Sunday. -->
+              <span v-if="deadline" class="countdown-wrap">
+                <span class="countdown-title">{{ deadline.title }} in</span>
+                <span class="countdown mono" :class="{ urgent }">{{ countdown }}</span>
+              </span>
             </div>
-            <div v-if="deadline" class="tiny faint phase-until">
-              {{ deadline.title }} · {{ deadline.label }}
-            </div>
+            <div v-if="deadline" class="tiny faint phase-until">{{ deadline.label }}</div>
           </div>
           <button class="btn btn-ghost btn-sm" @click="signOut">Sign out</button>
         </div>
@@ -253,6 +257,18 @@ onUnmounted(() => clearInterval(clockTimer))
   color: var(--warn);
 }
 
+.countdown-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.countdown-title {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+}
+
 .phase-name {
   font-size: 0.8rem;
   font-weight: 700;
@@ -330,6 +346,10 @@ onUnmounted(() => clearInterval(clockTimer))
 
   .countdown {
     font-size: 0.85rem;
+  }
+
+  .countdown-title {
+    font-size: 0.65rem;
   }
 
   .phase-row {

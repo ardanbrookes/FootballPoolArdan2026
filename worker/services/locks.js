@@ -186,14 +186,23 @@ export async function getLockState(leagueId, ref) {
     ? PHASE.PRESEASON
     : resolvePhase(at, cycle, firstKickoff, cycleHasGames)
 
+  // The week the league should be on right now, according to the schedule.
+  // activeWeek is already NEXT week from the Sunday lock onwards — which is
+  // what the early-game locks need — but until Monday's final whistle the
+  // league is still playing the week that's finishing. Measuring drift against
+  // activeWeek would have raised a false alarm every Sunday.
+  const expectedWeek =
+    completed.week == null ? null : at < cycle.weekResetAt ? completed.week : completed.week + 1
+
   return {
     phase,
     phaseLabel: PHASE_LABEL[phase],
     activeWeek,
     completedWeek: completed.week,
+    expectedWeek,
     weekDrift:
-      league && activeWeek != null && activeWeek !== league.current_week
-        ? { leagueWeek: league.current_week, scheduleWeek: activeWeek }
+      league && expectedWeek != null && expectedWeek !== league.current_week
+        ? { leagueWeek: league.current_week, scheduleWeek: expectedWeek }
         : null,
     cycle: {
       blanketLockAt: toIso(cycle.blanketLockAt),
@@ -260,12 +269,16 @@ function nextDeadline(at, cycle, firstKickoff, phase, seasonStartsAt) {
     }
   }
 
-  // Only three things are worth counting down to: waivers clearing, the partial
-  // lock when the week's first game kicks off, and the full lock on Sunday.
-  // The Monday unlock is deliberately not a target — it's a release rather than
-  // a deadline, and nobody needs to race it.
+  // What's worth counting down to: waivers clearing, the partial lock when the
+  // week's first game kicks off, the full lock on Sunday — and, during the
+  // full lock, the unlock. Nobody races the unlock, but "when does this end?"
+  // is the one question anyone has while rosters are frozen, and counting to
+  // Tuesday's waiver run instead made the lock look hours longer than it is.
   const candidates = []
 
+  if (phase === PHASE.BLANKET_LOCK && cycle.weekResetAt > at) {
+    candidates.push({ name: 'unlock', title: 'Rosters unlock', at: cycle.weekResetAt })
+  }
   if (cycle.waiverProcessAt > at) {
     candidates.push({ name: 'waivers', title: 'Waivers clear', at: cycle.waiverProcessAt })
   }

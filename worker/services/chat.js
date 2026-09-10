@@ -127,7 +127,8 @@ export async function announcePhaseChange(leagueId, phase, phaseLabel, deadline)
     blanket_lock: 'Rosters are locked and trades are closed. Free agents have moved to waivers.',
     waiver_period: 'Rosters are unlocked and trades are open. Waiver claims process Tuesday 3:00 AM.',
     open: 'Waivers have cleared. Free agents are first come, first served.',
-    early_game_lock: 'Thursday night is under way — only the two teams playing are locked.',
+    early_game_lock:
+      'The first game of the week has kicked off — players on teams that have played are locked, and the unrostered ones go on waivers. Everyone else stays open until Sunday.',
   }
 
   await postSystemMessage({

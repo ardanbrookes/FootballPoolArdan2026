@@ -667,13 +667,30 @@ export async function setCurrentWeek({ leagueId, league, week }) {
   const teams = await query('SELECT id FROM teams WHERE league_id = @leagueId', { leagueId })
   for (const team of teams) await ensureLineupRows(leagueId, team.id, league.season, week)
 
+  // Going back is undoing a week that ended too early, so undo what ending it
+  // did: the week reset marked its matchups final and counted them in the
+  // standings. Left alone, the rolled-back week kept its premature result in
+  // the standings. Pinned scores are the commissioner's own calls and stay.
+  let matchupsReopened = 0
+  if (week < league.current_week) {
+    const reopened = await run(
+      `UPDATE matchups
+          SET status = CASE WHEN week = @week THEN 'in_progress' ELSE 'scheduled' END
+        WHERE league_id = @leagueId AND season = @season AND week >= @week
+          AND status = 'final' AND manual_override = 0`,
+      { leagueId, season: league.season, week },
+    )
+    matchupsReopened = reopened?.changes ?? 0
+    await recalculateStandings(leagueId, league.season)
+  }
+
   await run(
     `INSERT INTO messages (league_id, kind, event_type, body)
      VALUES (@leagueId, 'system', 'commissioner', @body)`,
     { leagueId, body: `Commissioner set the league to week ${week} (was week ${league.current_week}).` },
   )
 
-  return { week, previousWeek: league.current_week }
+  return { week, previousWeek: league.current_week, matchupsReopened }
 }
 
 // ---------------------------------------------------------------------------
