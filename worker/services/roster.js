@@ -75,9 +75,12 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
   const rosterIds = rostered.map((p) => p.id)
   const scope = { playerIds: rosterIds }
 
-  const [points, projections, restOfSeason, games] = await Promise.all([
+  const [points, projections, lastWeek, restOfSeason, games] = await Promise.all([
     getWeekPoints(season, week, 'regular', undefined, scope),
     getWeekProjections(season, week, 'regular', undefined, scope),
+    // What each player did last week, shown beside this week's projection so a
+    // lineup decision has both halves of the picture in one place.
+    week > 1 ? getWeekPoints(season, week - 1, 'regular', undefined, scope) : new Map(),
     // Carried here as well as on /rosters so the trade builder shows the same
     // number for your own players as it does for the other team's.
     getRestOfSeasonPoints(season, week, playoffs.regularSeasonWeeks, 'regular', undefined, scope),
@@ -107,6 +110,7 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     onTradeBlock: Boolean(player.on_trade_block),
     points: points.get(player.id) ?? 0,
     projectedPoints: projections.get(player.id) ?? 0,
+    lastWeekPoints: lastWeek.get(player.id) ?? 0,
     restOfSeasonPoints: restOfSeason.get(player.id) ?? 0,
     /**
      * Has this player's game kicked off?

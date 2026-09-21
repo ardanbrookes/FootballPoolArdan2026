@@ -11,6 +11,8 @@ import { computed } from 'vue'
 const props = defineProps({
   matchup: { type: Object, required: true },
   myTeamId: { type: [Number, String], default: null },
+  /** "Your matchup", or "Week 2 result" while last week's game is still up. */
+  heading: { type: String, default: 'Your matchup' },
 })
 
 const away = computed(() => props.matchup.away)
@@ -103,7 +105,7 @@ const progress = (side) => {
 <template>
   <div class="card">
     <div class="card-header">
-      <h2>Your matchup</h2>
+      <h2>{{ heading }}</h2>
       <span v-if="margin !== '0.0'" class="tiny faint">{{ margin }} apart</span>
     </div>
 

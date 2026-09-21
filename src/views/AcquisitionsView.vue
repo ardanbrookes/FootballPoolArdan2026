@@ -255,7 +255,7 @@ onMounted(loadAll)
           <div class="card-body flush">
             <div v-if="claims.length === 0" class="empty">
               No pending claims. Claims process
-              {{ league.lockState?.cycle?.waiverProcessAt ? when(league.lockState.cycle.waiverProcessAt) : 'Tuesday 3am' }}.
+              {{ league.lockState?.cycle?.waiverProcessAt ? when(league.lockState.cycle.waiverProcessAt) : 'at the next waiver run' }}.
             </div>
             <div v-for="(claim, index) in claims" :key="claim.id" class="claim-row">
               <div class="claim-priority mono">{{ index + 1 }}</div>

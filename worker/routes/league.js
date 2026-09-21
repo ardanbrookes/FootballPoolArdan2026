@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { DateTime } from 'luxon'
 import { get, query } from '../db.js'
 import { loadLeague, requireCommissioner, requireUser } from '../middleware/auth.js'
-import { getLockState, isPlayerLocked, playerLockReason } from '../services/locks.js'
+import { getLockState, isPlayerLocked, playerLockReason, poolDisplayWeeks } from '../services/locks.js'
 import {
   getStandings,
   getLineupWithPoints,
@@ -275,18 +275,24 @@ router.get('/nfl-games', async (c) => {
 /** Every team's roster — the "League > Rosters" view. */
 router.get('/rosters', async (c) => {
   const league = c.get('league')
-  const week = Number(c.req.query('week') ?? league.current_week)
+
+  // Lock state travels with every player here, not just on your own roster:
+  // the trade builder needs to know an opponent's Thursday-night player can't
+  // move *before* the offer is built, rather than failing on submit.
+  const lockState = await getLockState(league.id)
+
+  // Points stay on the week that has been played until the next week's first
+  // kickoff, so the week's performances are still here to read on a Tuesday
+  // instead of being replaced by zeroes the moment the week ticks over.
+  const week = Number(
+    c.req.query('week') ?? poolDisplayWeeks(lockState, league.current_week).pointsWeek,
+  )
   const teams = await query(
     `SELECT t.id, t.name, t.abbreviation, u.display_name AS manager
        FROM teams t LEFT JOIN users u ON u.id = t.user_id
       WHERE t.league_id = @leagueId ORDER BY t.name ASC`,
     { leagueId: league.id },
   )
-
-  // Lock state travels with every player here, not just on your own roster:
-  // the trade builder needs to know an opponent's Thursday-night player can't
-  // move *before* the offer is built, rather than failing on submit.
-  const lockState = await getLockState(league.id)
 
   // Rest-of-season projection is what a trade actually turns on, and bench
   // players need their score too — the League page was showing a blank column
@@ -331,10 +337,14 @@ router.get('/rosters', async (c) => {
           WHERE rp.league_id = @leagueId AND rp.team_id = @teamId`,
         { leagueId: league.id, teamId: team.id },
       )
+      const lineup = starters.map((slot) => ({ ...slot, player: decorate(slot.player) }))
       return {
         ...team,
-        starters: starters.map((slot) => ({ ...slot, player: decorate(slot.player) })),
+        starters: lineup,
         bench: roster.filter((p) => !startingIds.has(p.id)).map(decorate),
+        // What this lineup actually scored that week — the number people go to
+        // the rosters page to compare.
+        total: Math.round(lineup.reduce((sum, s) => sum + (s.player?.points ?? 0), 0) * 100) / 100,
       }
     }),
   )

@@ -42,7 +42,7 @@ export function getSleeperConfig() {
  *                                 remaining free agents go on waivers
  *   Mon late       weekReset      the last game ends -> rosters unlock, standings
  *                                 update, trades reopen, claims can be queued
- *   Tue 03:00      waiverProcess  claims resolve; everyone unclaimed becomes a
+ *   Wed 00:00      waiverProcess  claims resolve; everyone unclaimed becomes a
  *                                 free agent and the open window begins
  *   Thu kickoff    (derived)      only the two teams playing lock
  *
@@ -60,8 +60,8 @@ export function getTimingConfig() {
     timezone: env.LEAGUE_TIMEZONE || 'America/Vancouver',
 
     waiverProcess: {
-      weekday: int(env.WAIVER_PROCESS_WEEKDAY, 2), // Tuesday
-      hour: int(env.WAIVER_PROCESS_HOUR, 3), // 3:00 AM Pacific
+      weekday: int(env.WAIVER_PROCESS_WEEKDAY, 3), // Wednesday
+      hour: int(env.WAIVER_PROCESS_HOUR, 0), // midnight Pacific
       minute: int(env.WAIVER_PROCESS_MINUTE, 0),
     },
 

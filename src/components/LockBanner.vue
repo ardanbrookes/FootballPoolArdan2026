@@ -4,6 +4,7 @@
  * manager right now — the single most confusing part of the league rules.
  */
 import { computed } from 'vue'
+import { formatInZone } from '@/utils/time.js'
 
 const props = defineProps({
   lockState: { type: Object, default: null },
@@ -37,6 +38,18 @@ const headline = computed(() => {
     : 'Unrostered players are ON WAIVERS — you can only submit a claim, which resolves at the next processing run.'
 })
 
+/**
+ * When claims next process, in the league's timezone.
+ *
+ * Read from the live cycle rather than written into the copy, so moving the
+ * waiver run doesn't leave three screens claiming it still happens Tuesday.
+ */
+const waiverRun = computed(() => {
+  const cycle = props.lockState?.cycle
+  if (!cycle?.waiverProcessAt) return 'the next waiver run'
+  return formatInZone(cycle.waiverProcessAt, cycle.timezone, { weekday: 'short' })
+})
+
 /** "NE, SEA and LAR" — once a second early game kicks off, "NE and SEA and LAR" reads badly. */
 const listTeams = (teams) =>
   teams.length < 2 ? teams.join('') : `${teams.slice(0, -1).join(', ')} and ${teams[teams.length - 1]}`
@@ -50,14 +63,14 @@ const detail = computed(() => {
     case 'preseason':
       return 'The season hasn\'t started, so there are no waivers yet. Free agency stays open until the first kickoff.'
     case 'waiver_period':
-      return 'Rosters and trades are open. Claims process Tuesday 3:00 AM.'
+      return 'Rosters and trades are open. Claims process ' + waiverRun.value + '.'
     case 'open':
       return 'Adds, drops, swaps and lineup changes are all available.'
     case 'early_game_lock':
       // Not "Thursday night": week 1 opened on a Wednesday, and some weeks
       // have more than one early game.
       return locked.length
-        ? `Early-game lock — players on ${listTeams(locked)} are frozen, and any of them who are unrostered are on waivers until Tuesday, so put in a claim. Everyone else stays open until Sunday.`
+        ? `Early-game lock — players on ${listTeams(locked)} are frozen, and any of them who are unrostered are on waivers until ${waiverRun.value}, so put in a claim. Everyone else stays open until Sunday.`
         : 'Early-game lock — players whose teams have already kicked off are frozen.'
     case 'blanket_lock':
       return 'Rosters are frozen and trades are closed until the last game of the week finishes. You can still queue claims.'

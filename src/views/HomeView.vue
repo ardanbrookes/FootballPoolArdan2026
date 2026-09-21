@@ -29,6 +29,24 @@ const myTeamId = computed(() => league.myTeam?.id ?? null)
 const lastWeekNumber = computed(() => league.currentWeek - 1)
 
 /**
+ * Which matchup the scoreboard shows.
+ *
+ * The week advances on Monday night, the moment the last game ends — but the
+ * result is what everyone wants to read for the next day and a half. So the
+ * box stays on the week just played until waivers clear, then moves to the
+ * fixture being built. It deliberately tracks its own week rather than the
+ * roster's, so editing next week's lineup can't rewrite last week's result.
+ */
+const matchupWeek = computed(() => {
+  const week = league.currentWeek
+  return league.phase === 'waiver_period' && week > 1 ? week - 1 : week
+})
+
+const matchupHeading = computed(() =>
+  matchupWeek.value === league.currentWeek ? 'Your matchup' : 'Week ' + matchupWeek.value + ' result',
+)
+
+/**
  * Games that kick off before Sunday's lock — the ones that lock their teams
  * early — for the "what locks when" list.
  *
@@ -52,7 +70,7 @@ async function loadAll({ quiet = false } = {}) {
     const week = league.currentWeek
     const [rosterData, matchupData, gamesData] = await Promise.all([
       api.roster(week),
-      api.matchupDetail(week),
+      api.matchupDetail(matchupWeek.value),
       api.nflGames(league.lockState?.activeWeek ?? week),
     ])
     roster.value = rosterData.roster
@@ -181,7 +199,11 @@ const live = useLive(
   { intervalMs: 60000, immediate: false },
 )
 
-onMounted(loadAll)
+// The league has to be loaded before this knows which week to ask for.
+onMounted(async () => {
+  await league.ready()
+  await loadAll()
+})
 </script>
 
 <template>
@@ -198,7 +220,12 @@ onMounted(loadAll)
     <template v-for="block in layout" :key="block">
       <!-- Your matchup -->
       <template v-if="block === 'matchup'">
-        <MatchupScoreboard v-if="matchupDetail" :matchup="matchupDetail" :my-team-id="myTeamId" />
+        <MatchupScoreboard
+          v-if="matchupDetail"
+          :matchup="matchupDetail"
+          :my-team-id="myTeamId"
+          :heading="matchupHeading"
+        />
         <div v-else-if="loading" class="card"><div class="empty">Loading matchup…</div></div>
         <div v-else class="card"><div class="empty">No matchup scheduled this week.</div></div>
       </template>

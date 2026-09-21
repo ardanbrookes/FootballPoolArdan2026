@@ -5,6 +5,8 @@ import { computed } from 'vue'
 const props = defineProps({
   player: { type: Object, required: true },
   showPoints: { type: Boolean, default: false },
+  /** Show what they scored last week, beside this week's number. */
+  showLast: { type: Boolean, default: false },
   /** Show this week's opponent ("@BUF") instead of the bye-week number. */
   showOpponent: { type: Boolean, default: false },
 })
@@ -76,6 +78,10 @@ const pointsTitle = computed(() =>
         </template>
       </div>
     </div>
+    <div v-if="showLast" class="chip-points last mono" title="What they scored last week">
+      {{ (player.lastWeekPoints ?? 0).toFixed(1) }}
+      <span class="proj-tag">last</span>
+    </div>
     <div v-if="showPoints" class="chip-points mono" :class="{ proj: !scored }" :title="pointsTitle">
       {{ shownPoints.toFixed(1) }}
       <span v-if="!scored" class="proj-tag">proj</span>
@@ -141,6 +147,13 @@ const pointsTitle = computed(() =>
 .chip-points.proj {
   color: var(--text-muted);
   font-weight: 500;
+}
+
+.chip-points.last {
+  color: var(--text-faint);
+  font-weight: 500;
+  min-width: 2.2rem;
+  text-align: right;
 }
 
 .proj-tag {

@@ -11,10 +11,10 @@ import {
   swapIr,
   isIrEligible,
 } from '../services/roster.js'
-import { getLockState } from '../services/locks.js'
+import { getLockState, poolDisplayWeeks } from '../services/locks.js'
 import { renameTeam, setTradeBlock, getTradeBlock } from '../services/team.js'
 import { searchPlayers, getPlayerWithAvailability, setWatchlist } from '../services/players.js'
-import { getWeekProjections } from '../services/scoring.js'
+import { getWeekPoints, getWeekProjections } from '../services/scoring.js'
 
 const router = new Hono()
 router.use('*', loadLeague)
@@ -34,20 +34,45 @@ router.get('/players', async (c) => {
     watchedOnly: c.req.query('watched') === '1',
   })
 
-  // Projections are for the week about to be played, which during the open
-  // window is the league's current week.
-  const week = Number(c.req.query('week') ?? league.current_week)
+  // Two numbers per player, on different clocks: what they scored in the week
+  // that has been played, and what they're projected for in the week being
+  // built. poolDisplayWeeks owns when each one rolls over.
+  const explicitWeek = c.req.query('week') ? Number(c.req.query('week')) : null
+  const lockState = await getLockState(league.id)
+  const display = poolDisplayWeeks(lockState, league.current_week)
+  const pointsWeek = explicitWeek ?? display.pointsWeek
+
   // Scoped to the players actually being returned. Unscoped this loaded every
   // projection in the league — ~800 rows to annotate a page of 50.
-  const projections = await getWeekProjections(league.season, week, league.season_type, undefined, {
-    playerIds: players.map((p) => p.id),
-  })
+  const scope = { playerIds: players.map((p) => p.id) }
+  let projectionWeek = explicitWeek ?? display.projectionWeek
+
+  let [points, projections] = await Promise.all([
+    getWeekPoints(league.season, pointsWeek, league.season_type, undefined, scope),
+    getWeekProjections(league.season, projectionWeek, league.season_type, undefined, scope),
+  ])
+
+  // Next week's projections don't appear the moment the Sunday lock lands.
+  // Until they do, keep showing this week's rather than a column of blanks.
+  if (!explicitWeek && projectionWeek !== league.current_week && projections.size === 0) {
+    projectionWeek = league.current_week
+    projections = await getWeekProjections(
+      league.season,
+      projectionWeek,
+      league.season_type,
+      undefined,
+      scope,
+    )
+  }
 
   return c.json({
-    week,
+    week: pointsWeek,
+    pointsWeek,
+    projectionWeek,
     players: players.map((p) => ({
       ...p,
       watched: Boolean(p.watched),
+      points: points.get(p.id) ?? 0,
       projectedPoints: projections.get(p.id) ?? null,
       // Decided here rather than in the browser so the eligible-status list
       // stays in config and can't drift out of step with what the server

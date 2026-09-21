@@ -37,9 +37,9 @@ crons = ["*/15 * * * *"]
 # 3:00am stays 3:00am local from September through January.
 LEAGUE_TIMEZONE = "America/Vancouver"
 
-# Waivers process Tuesday 3:00 AM Pacific.
-WAIVER_PROCESS_WEEKDAY = "2"
-WAIVER_PROCESS_HOUR = "3"
+# Waivers process Wednesday 12:00 AM Pacific.
+WAIVER_PROCESS_WEEKDAY = "3"
+WAIVER_PROCESS_HOUR = "0"
 WAIVER_PROCESS_MINUTE = "0"
 
 # All rosters lock Sunday 10:00 AM Pacific — the moment the early window kicks

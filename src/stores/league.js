@@ -55,7 +55,27 @@ export const useLeagueStore = defineStore('league', () => {
   const allows = computed(() => lockState.value?.allows ?? {})
   const rosterSlots = computed(() => config.value?.rosterSlots ?? [])
 
-  async function load() {
+  /**
+   * Shared in-flight load.
+   *
+   * Views mount before App's first load resolves, so anything reading
+   * currentWeek at mount saw the placeholder 1 and fetched week 1 — which is
+   * why a reload showed last week's matchup and roster until you switched
+   * tabs. ready() waits for the real value, and concurrent callers share the
+   * single request rather than racing.
+   */
+  let inflight = null
+
+  function load() {
+    if (!inflight) inflight = runLoad().finally(() => { inflight = null })
+    return inflight
+  }
+
+  function ready() {
+    return league.value ? Promise.resolve() : load()
+  }
+
+  async function runLoad() {
     loading.value = true
     error.value = null
     try {
@@ -94,6 +114,7 @@ export const useLeagueStore = defineStore('league', () => {
     allows,
     rosterSlots,
     load,
+    ready,
     refreshLocks,
   }
 })

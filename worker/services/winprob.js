@@ -18,7 +18,7 @@
  * something to bet on.
  */
 
-import { positionVariance, defaultPositionSd } from '../config.js'
+import { positionVariance, defaultPositionSd, GAME_DURATION_HOURS } from '../config.js'
 
 /**
  * Weekly standard deviation for a starter, in points.
@@ -32,19 +32,39 @@ function sdFor(player) {
 }
 
 /**
+ * How much of a player's game is still to come, as a share between 0 and 1.
+ *
+ * There is no game clock in the database, so this is wall-clock time since
+ * kickoff against a typical game length. It drifts either side of the real
+ * clock — a weather delay, a game running long — but for "am I still alive
+ * here?" it is close enough, and it is bounded at both ends.
+ */
+function remainingShare(game, nowMs) {
+  const kickoff = Date.parse(game?.kickoffAt ?? '')
+  // No kickoff time to work from: treat the game as half gone rather than
+  // pretending it is finished or hasn't started.
+  if (!Number.isFinite(kickoff)) return 0.5
+
+  const elapsedHours = (nowMs - kickoff) / 3_600_000
+  return Math.min(1, Math.max(0, 1 - elapsedHours / GAME_DURATION_HOURS))
+}
+
+/**
  * Expected points and variance still to come for one starter.
  *
  * Three cases, and the distinction matters most on a Sunday afternoon:
  *
  *   final        what they scored is now a fact — no mean to guess, no variance
- *   in progress  part banked, part still live: expect half of whatever is left,
- *                with the uncertainty damped since some of the game is gone
+ *   in progress  what they have banked, plus their projection for the share of
+ *                the game still to play, with the uncertainty shrinking on the
+ *                same curve — a player 10 points up at half time is most of the
+ *                way to a settled score
  *   scheduled    the projection, at full positional variance
  *
  * A player already past their projection keeps the points they have; the model
  * never claws back a score that has already happened.
  */
-function contribution(slot) {
+function contribution(slot, nowMs) {
   const player = slot?.player
   if (!player) return { mean: 0, variance: 0 }
 
@@ -58,8 +78,8 @@ function contribution(slot) {
   }
 
   if (status === 'in_progress') {
-    const remaining = Math.max(0, projected - actual)
-    return { mean: actual + remaining * 0.5, variance: (sd * 0.6) ** 2 }
+    const share = remainingShare(player.game, nowMs)
+    return { mean: actual + projected * share, variance: (sd * share) ** 2 }
   }
 
   return { mean: projected, variance: sd ** 2 }
@@ -86,11 +106,11 @@ const normalCdf = (z) => 0.5 * (1 + erf(z / Math.SQRT2))
  * `homeStarters` / `awayStarters` are the slot lists the matchup endpoint
  * already builds, so this needs no extra queries.
  */
-export function winProbability(homeStarters = [], awayStarters = []) {
+export function winProbability(homeStarters = [], awayStarters = [], nowMs = Date.now()) {
   const tally = (slots) =>
     slots.reduce(
       (acc, slot) => {
-        const { mean, variance } = contribution(slot)
+        const { mean, variance } = contribution(slot, nowMs)
         return { mean: acc.mean + mean, variance: acc.variance + variance }
       },
       { mean: 0, variance: 0 },

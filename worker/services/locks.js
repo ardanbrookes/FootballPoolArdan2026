@@ -8,11 +8,11 @@
  *       Everything freezes: no lineup changes, no adds, no drops, no trades.
  *       Any remaining free agents go on waivers, so the pool is claim-only.
  *
- *   WAIVER_PERIOD    last game ends -> Tue 03:00
+ *   WAIVER_PERIOD    last game ends -> the waiver run (Wed 00:00)
  *       Rosters unlock, standings are final, trades reopen. Everyone unrostered
  *       is on waivers, so claims are queued rather than picked up instantly.
  *
- *   OPEN             Tue 03:00 -> first kickoff of the new week
+ *   OPEN             the waiver run -> first kickoff of the new week
  *       Claims have resolved. Adds, drops and swaps are first-come-first-served.
  *
  *   EARLY_GAME_LOCK  first kickoff -> Sun 13:00
@@ -328,5 +328,29 @@ export function assertAllowed(lockState, capability, message) {
     err.status = 409
     err.code = 'PHASE_LOCKED'
     throw err
+  }
+}
+
+/**
+ * Which week's points and projections a pool or roster listing should show.
+ *
+ * They run on different clocks, and both are deliberately sticky:
+ *
+ *   points       the week that has been played, right up until the next week's
+ *                first kickoff. On a Tuesday you want to see what someone
+ *                actually did, not a column of zeroes waiting for Thursday.
+ *   projections  this week's, until the Sunday lock settles them — from there
+ *                the useful number is next week's.
+ *
+ * Callers fall back to the current week when next week's projections haven't
+ * been published yet; that is a data question, not a scheduling one.
+ */
+export function poolDisplayWeeks(lockState, currentWeek) {
+  const playing =
+    lockState?.phase === PHASE.EARLY_GAME_LOCK || lockState?.phase === PHASE.BLANKET_LOCK
+
+  return {
+    pointsWeek: playing ? currentWeek : Math.max(1, currentWeek - 1),
+    projectionWeek: lockState?.phase === PHASE.BLANKET_LOCK ? currentWeek + 1 : currentWeek,
   }
 }

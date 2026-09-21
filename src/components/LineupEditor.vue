@@ -238,6 +238,7 @@ function doSwap(irPlayer, incoming) {
           <PlayerChip
             v-if="playerFor(slot.slot)"
             :player="playerFor(slot.slot)"
+            show-last
             show-points
             show-opponent
           />
@@ -257,7 +258,7 @@ function doSwap(irPlayer, incoming) {
             :title="candidate.lockReason || ''"
             @click="assign(slot.slot, candidate.id)"
           >
-            <PlayerChip :player="candidate" show-points show-opponent />
+            <PlayerChip :player="candidate" show-last show-points show-opponent />
           </button>
           <button v-if="playerFor(slot.slot)" class="candidate clear" @click="clearSlot(slot.slot)">
             Move {{ playerFor(slot.slot).name }} to bench
@@ -274,7 +275,7 @@ function doSwap(irPlayer, incoming) {
       <div v-if="benchNow.length === 0" class="empty small">Bench is empty.</div>
       <div v-for="player in benchNow" :key="player.id" class="slot bench-row">
         <span class="slot-label tiny">BN</span>
-        <PlayerChip :player="player" show-points show-opponent />
+        <PlayerChip :player="player" show-last show-points show-opponent />
       </div>
 
       <!-- IR last: it isn't part of the week's lineup and scores nothing. -->

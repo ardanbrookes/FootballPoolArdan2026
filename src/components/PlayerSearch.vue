@@ -30,7 +30,10 @@ const players = ref([])
 const loading = ref(false)
 const error = ref(null)
 const watchedOnly = ref(false)
-const week = ref(null)
+// Two different weeks: points are the week that has been played, projections
+// the week being built. The server decides when each rolls over.
+const pointsWeek = ref(null)
+const projectionWeek = ref(null)
 
 let debounce
 
@@ -46,7 +49,8 @@ async function load() {
       limit: 60,
     })
     players.value = data.players
-    week.value = data.week
+    pointsWeek.value = data.pointsWeek ?? data.week
+    projectionWeek.value = data.projectionWeek ?? data.week
   } catch (err) {
     error.value = err.message
   } finally {
@@ -152,13 +156,20 @@ const canAddNow = () => props.lockState?.allows?.freeAgentAdd
           }"
         />
 
-        <span
-          v-if="player.projectedPoints !== null && player.projectedPoints !== undefined"
-          class="proj mono tiny"
-          :title="`Projected ${player.projectedPoints} pts in week ${week}`"
-        >
-          {{ player.projectedPoints.toFixed(1) }}
-        </span>
+        <div class="pool-points">
+          <span class="num mono tiny" :title="'Points in week ' + pointsWeek">
+            {{ (player.points ?? 0).toFixed(1) }}
+            <span class="cap">wk {{ pointsWeek }}</span>
+          </span>
+          <span
+            v-if="player.projectedPoints !== null && player.projectedPoints !== undefined"
+            class="num mono tiny"
+            :title="'Projected points for week ' + projectionWeek"
+          >
+            {{ player.projectedPoints.toFixed(1) }}
+            <span class="cap">proj</span>
+          </span>
+        </div>
 
         <div class="actions">
           <span v-if="player.availability === 'rostered'" class="pill pill-info">
@@ -210,6 +221,28 @@ const canAddNow = () => props.lockState?.allows?.freeAgentAdd
 
 .star.on {
   color: var(--warn);
+}
+
+.pool-points {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.pool-points .num {
+  min-width: 2.4rem;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.pool-points .cap {
+  display: block;
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  line-height: 1;
 }
 
 .proj {

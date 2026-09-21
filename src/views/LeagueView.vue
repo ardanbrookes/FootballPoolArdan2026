@@ -22,6 +22,9 @@ const selectedWeek = ref(null)
 const selectedTeamId = ref(null)
 const loading = ref(true)
 const rostersLoading = ref(false)
+// The server decides which week the rosters show — the one just played, until
+// the next week kicks off — so the label follows its answer rather than ours.
+const rostersWeek = ref(null)
 const error = ref(null)
 
 const myTeamId = computed(() => league.myTeam?.id ?? null)
@@ -81,7 +84,9 @@ async function loadRosters() {
   if (rosters.value.length || rostersLoading.value) return
   rostersLoading.value = true
   try {
-    rosters.value = (await api.rosters(league.currentWeek)).teams
+    const data = await api.rosters()
+    rosters.value = data.teams
+    rostersWeek.value = data.week
     applyDefaultTeam()
   } catch (err) {
     error.value = err.message
@@ -218,7 +223,10 @@ onMounted(async () => {
                 <div class="bold">{{ selectedTeam.name }}</div>
                 <div class="tiny faint">{{ selectedTeam.manager || 'Unclaimed' }}</div>
               </div>
-              <div class="tiny faint">Week {{ overview.currentWeek }}</div>
+              <div class="team-total">
+                <div class="mono bold total-num">{{ (selectedTeam.total ?? 0).toFixed(1) }}</div>
+                <div class="tiny faint">Week {{ rostersWeek ?? overview.currentWeek }} total</div>
+              </div>
             </div>
 
             <div v-for="slot in selectedTeam.starters" :key="slot.slot" class="lineup-row">
@@ -413,6 +421,16 @@ onMounted(async () => {
 
 .roster-detail {
   min-width: 0;
+}
+
+.team-total {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.total-num {
+  font-size: 1.25rem;
+  line-height: 1.1;
 }
 
 .detail-head {

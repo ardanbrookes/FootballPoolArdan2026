@@ -162,9 +162,9 @@ const scoringGroups = computed(() => {
       <div class="card-body">
         <p class="small muted" style="margin-top: 0">
           The top bar always shows which period you're in. The <strong>open period</strong> runs from
-          Tuesday's waiver run to the week's first kickoff. The <strong>game period</strong> runs from that
+          the waiver run to the week's first kickoff. The <strong>game period</strong> runs from that
           first kickoff to Monday night's final whistle — a partial lock first, then from Sunday a full
-          lock. The <strong>waiver period</strong> fills the gap from Monday night to Tuesday's waiver run.
+          lock. The <strong>waiver period</strong> fills the gap from Monday night to the waiver run.
         </p>
         <ol class="cycle">
           <li>
@@ -197,7 +197,8 @@ const scoringGroups = computed(() => {
               <strong>only the two teams in it</strong> lock. Every other player stays available for adds,
               drops and lineup changes right up to the Sunday lock. Every pre-Sunday game — a second
               midweek game, Black Friday, a late-season Saturday — locks its two teams the same way. Their
-              unrostered players go on waivers at kickoff: put in a claim and it resolves on Tuesday.
+              unrostered players go on waivers at kickoff: put in a claim and it resolves at the next
+              waiver run.
             </p>
           </li>
         </ol>

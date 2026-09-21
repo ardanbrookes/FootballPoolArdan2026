@@ -125,7 +125,9 @@ export async function announcePhaseChange(leagueId, phase, phaseLabel, deadline)
 
   const blurb = {
     blanket_lock: 'Rosters are locked and trades are closed. Free agents have moved to waivers.',
-    waiver_period: 'Rosters are unlocked and trades are open. Waiver claims process Tuesday 3:00 AM.',
+    // The deadline label travels with the phase, so this stays right when the
+    // waiver run moves rather than naming a day in a string.
+    waiver_period: `Rosters are unlocked and trades are open. Waiver claims process ${deadline ?? 'at the next waiver run'}.`,
     open: 'Waivers have cleared. Free agents are first come, first served.',
     early_game_lock:
       'The first game of the week has kicked off — players on teams that have played are locked, and the unrostered ones go on waivers. Everyone else stays open until Sunday.',

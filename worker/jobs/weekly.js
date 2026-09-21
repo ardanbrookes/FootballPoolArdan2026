@@ -38,8 +38,8 @@ async function leaguesFor(leagueId) {
 }
 
 /**
- * Tuesday 3:00 AM (configurable): resolve every pending claim, then release
- * everyone left over into free agency.
+ * The waiver run (configurable — Wednesday 12:00 AM): resolve every pending
+ * claim, then release everyone left over into free agency.
  */
 export async function runWaiverProcessing({ leagueId } = {}) {
   const results = []
