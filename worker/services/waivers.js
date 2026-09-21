@@ -26,7 +26,7 @@
 import { get, query, run, batch, stmt, nowIso } from '../db.js'
 import { roster as rosterConfig } from '../config.js'
 import { getWaiverConfig } from './settings.js'
-import { acquisitionStatements, getRosterCount, isIrEligible } from './roster.js'
+import { acquisitionStatements, assertIrLegal, getRosterCount, isIrEligible } from './roster.js'
 import { AVAILABILITY, getPlayerWithAvailability, nextWaiverClearTime, statements as poolStatements } from './players.js'
 
 export const CLAIM_STATUS = {
@@ -128,6 +128,8 @@ export async function submitClaim({
   if (target.availability === AVAILABILITY.ROSTERED) {
     throw httpError(`${target.full_name} is already rostered by ${target.owner_team_name}.`, 409)
   }
+
+  await assertIrLegal(leagueId, teamId, 'submit a claim')
 
   const existing = await get(
     `SELECT id FROM waiver_claims

@@ -32,6 +32,27 @@ const error = ref(null)
 const myTeamId = computed(() => league.myTeam?.id ?? null)
 const rosterFull = computed(() => (roster.value ? roster.value.counts.total >= roster.value.counts.max : false))
 
+/**
+ * Why acquisitions are refused, when they are.
+ *
+ * The server blocks adds and claims while someone who no longer qualifies is
+ * sitting on IR. Saying so up front beats letting people pick a player and
+ * then handing them an error.
+ */
+const irBlockReason = computed(() => {
+  const blocked = roster.value?.irBlocked ?? []
+  if (!blocked.length) return null
+  const names = blocked.map((p) => p.name).join(', ')
+  const verb = blocked.length > 1 ? 'no longer qualify' : 'no longer qualifies'
+  return (
+    names +
+    ' ' +
+    verb +
+    ' for injured reserve. Activate, drop, or swap them for an injured player before adding' +
+    ' anyone or making a claim.'
+  )
+})
+
 const myOrderPosition = computed(() => {
   const index = order.value.findIndex((t) => t.id === myTeamId.value)
   return index >= 0 ? index + 1 : null
@@ -210,6 +231,8 @@ onMounted(loadAll)
   <div class="stack">
     <LockBanner :lock-state="league.lockState" />
 
+    <div v-if="irBlockReason" class="alert alert-warn">{{ irBlockReason }}</div>
+
     <div v-if="message" class="alert alert-success">{{ message }}</div>
     <div v-if="error" class="alert alert-error">{{ error }}</div>
 
@@ -219,6 +242,7 @@ onMounted(loadAll)
           ref="searchRef"
           :lock-state="league.lockState"
           :busy-player-id="busyPlayerId"
+          :blocked-reason="irBlockReason"
           @add="startAdd"
           @claim="startClaim"
         />
@@ -370,8 +394,12 @@ onMounted(loadAll)
             <div v-for="player in roster.ir" :key="player.id" class="tx-row">
               <PlayerChip :player="player" />
               <div class="row-actions">
-                <span v-if="player.healthyOnIr" class="pill pill-warn tiny" title="No longer injured — activate or drop">
-                  healthy
+                <span
+                  v-if="player.healthyOnIr"
+                  class="pill pill-warn tiny"
+                  title="No longer qualifies for IR — activate, drop, or swap them"
+                >
+                  not eligible
                 </span>
                 <button
                   class="btn btn-sm"

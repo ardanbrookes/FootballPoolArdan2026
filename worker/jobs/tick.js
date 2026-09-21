@@ -36,6 +36,7 @@ import { getLockState, PHASE } from '../services/locks.js'
 import { announcePhaseChange, postSystemMessage } from '../services/chat.js'
 import { getSyncEntry, recordSync } from '../services/sleeper.js'
 import { placeTeamsOnWaivers, nextWaiverClearTime } from '../services/players.js'
+import { isIrEligible } from '../services/roster.js'
 import { ingestNews, TEAM_ROTATION } from '../services/news.js'
 import {
   runWaiverProcessing,
@@ -151,6 +152,57 @@ async function waiverKickedOffTeams(league, lockState, timing, force, ran) {
   }
 }
 
+/**
+ * Announce anyone parked on IR who no longer qualifies for it.
+ *
+ * Their manager is blocked from lineup changes, adds and claims until they
+ * sort it out, so it has to be visible rather than only turning up as an
+ * error the next time they try something. Announced once per player: the key
+ * holds who has already been named, so a designation that lingers for a week
+ * doesn't repeat itself every fifteen minutes.
+ */
+async function announceIneligibleIr(league, ran) {
+  const key = `tick:ir-check:${league.id}`
+  const rows = await query(
+    `SELECT t.id AS team_id, t.name AS team_name, p.id AS player_id, p.full_name AS player,
+            COALESCE(p.injury_status, 'no designation') AS status
+       FROM roster_players rp
+       JOIN players p ON p.id = rp.player_id
+       JOIN teams t ON t.id = rp.team_id
+      WHERE rp.league_id = @leagueId AND rp.on_ir = 1`,
+    { leagueId: league.id },
+  )
+
+  const blocked = rows.filter((row) => !isIrEligible({ injury_status: row.status }))
+  const signature = blocked.map((b) => b.player_id).sort().join(',')
+
+  const last = await getSyncEntry(key)
+  if ((last?.detail ?? '') === signature) return
+
+  const already = new Set((last?.detail ?? '').split(',').filter(Boolean))
+  const fresh = blocked.filter((row) => !already.has(row.player_id))
+
+  try {
+    for (const row of fresh) {
+      await postSystemMessage({
+        leagueId: league.id,
+        teamId: row.team_id,
+        eventType: 'ir',
+        body:
+          `${row.player} no longer qualifies for injured reserve (${row.status}). ` +
+          `${row.team_name} can't change their lineup, add a free agent or make a claim ` +
+          `until they activate them, drop them, or swap them for an injured player.`,
+        meta: { playerId: row.player_id, status: row.status },
+      })
+    }
+    await recordSync(key, 'ok', signature)
+    if (fresh.length) ran.push({ leagueId: league.id, job: 'ir-check', announced: fresh.length })
+  } catch (err) {
+    console.error(`[tick] ir-check failed for league ${league.id}:`, err)
+    ran.push({ leagueId: league.id, job: 'ir-check', error: String(err.message || err) })
+  }
+}
+
 export async function runTick({ force = null } = {}) {
   const leagues = await query('SELECT id, season, season_type, current_week FROM leagues')
   const ran = []
@@ -241,6 +293,7 @@ export async function runTick({ force = null } = {}) {
     }
 
     await waiverKickedOffTeams(league, lockState, timing, force, ran)
+    await announceIneligibleIr(league, ran)
   }
 
   // Live scoring: cheap enough to run on every tick during the season.

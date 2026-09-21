@@ -122,6 +122,12 @@ const scoringGroups = computed(() => {
             someone needs an open roster spot, so you may have to drop a player first.
           </p>
           <p class="small muted" style="margin: 0.5rem 0 0">
+            Suspensions and NA don't qualify either — neither is an injury. And if a player on your
+            IR loses their designation, your <strong>lineup, free agent adds and waiver claims are
+            all frozen</strong> until you activate them, drop them, or swap them for an injured
+            player. Dropping and IR moves stay open, so there is always a way out.
+          </p>
+          <p class="small muted" style="margin: 0.5rem 0 0">
             You can also sign or claim an injured free agent
             <strong>straight onto IR</strong>, even with a full roster — they never occupy an active
             spot, so nobody has to be dropped. If a waiver claim was made this way and the player is

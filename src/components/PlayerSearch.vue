@@ -13,6 +13,8 @@ import PlayerChip from './PlayerChip.vue'
 const props = defineProps({
   lockState: { type: Object, default: null },
   busyPlayerId: { type: String, default: null },
+  /** Set when something on the roster blocks acquisitions, with the reason. */
+  blockedReason: { type: String, default: null },
 })
 
 const emit = defineEmits(['add', 'claim'])
@@ -98,7 +100,7 @@ watch(
 onMounted(load)
 defineExpose({ reload: load })
 
-const canAddNow = () => props.lockState?.allows?.freeAgentAdd
+const canAddNow = () => props.lockState?.allows?.freeAgentAdd && !props.blockedReason
 </script>
 
 <template>
@@ -180,7 +182,8 @@ const canAddNow = () => props.lockState?.allows?.freeAgentAdd
             <span class="pill pill-warn" :class="{ redundant: availability }">waivers</span>
             <button
               class="btn btn-sm"
-              :disabled="busyPlayerId === player.id"
+              :disabled="busyPlayerId === player.id || Boolean(blockedReason)"
+              :title="blockedReason || ''"
               @click="emit('claim', player)"
             >
               Claim
@@ -192,7 +195,7 @@ const canAddNow = () => props.lockState?.allows?.freeAgentAdd
             <button
               class="btn btn-sm btn-primary"
               :disabled="!canAddNow() || busyPlayerId === player.id"
-              :title="canAddNow() ? '' : 'Free agency is closed right now'"
+              :title="blockedReason || (canAddNow() ? '' : 'Free agency is closed right now')"
               @click="emit('add', player)"
             >
               Add

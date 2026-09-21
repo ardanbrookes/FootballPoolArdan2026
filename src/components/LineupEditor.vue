@@ -23,11 +23,28 @@ const props = defineProps({
   saving: { type: Boolean, default: false },
   /** Set while an IR move is in flight, to avoid double submits. */
   irBusy: { type: Boolean, default: false },
+  /** Players on IR who no longer qualify. Non-empty freezes the lineup. */
+  irBlocked: { type: Array, default: () => [] },
+  /** Injury designations that qualify for IR, from league config. */
+  eligibleStatuses: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['save', 'ir-place', 'ir-activate', 'ir-swap', 'dirty-change', 'renamed'])
 
 const teamName = computed(() => props.team?.name ?? null)
+
+/**
+ * An ineligible player on IR freezes the lineup, adds and claims until the
+ * manager deals with them — but not the IR controls themselves, which are
+ * the way out. canEdit still gates those.
+ */
+const irLocked = computed(() => props.irBlocked.length > 0)
+const canEditLineup = computed(() => props.canEdit && !irLocked.value)
+const irBlockedNames = computed(() => props.irBlocked.map((p) => p.name).join(', '))
+const irBlockedVerb = computed(() => (props.irBlocked.length > 1 ? 'no longer qualify' : 'no longer qualifies'))
+const eligibleList = computed(() =>
+  props.eligibleStatuses.length ? props.eligibleStatuses.join(', ') : 'Out, IR, PUP, Doubtful, DNR or COV',
+)
 
 const openSlot = ref(null)
 const draft = ref(null)
@@ -63,7 +80,7 @@ let saveTimer = null
 watch(
   () => assignments.value,
   () => {
-    if (!props.canEdit || !dirty.value) return
+    if (!canEditLineup.value || !dirty.value) return
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       if (dirty.value && !props.saving) save()
@@ -117,7 +134,7 @@ function ensureDraft() {
 }
 
 function toggleSlot(slot) {
-  if (!props.canEdit) return
+  if (!canEditLineup.value) return
   if (playerFor(slot.slot)?.locked) return
   openSlot.value = openSlot.value === slot.slot ? null : slot.slot
 }
@@ -227,11 +244,17 @@ function doSwap(irPlayer, incoming) {
     </div>
 
     <div class="card-body flush">
+      <div v-if="irLocked" class="ir-block">
+        <strong>{{ irBlockedNames }}</strong> {{ irBlockedVerb }} for injured reserve. Activate or
+        drop them below — or swap them for an injured player — to unlock your lineup, free agent
+        adds and claims.
+      </div>
+
       <!-- Starters -->
       <div v-for="slot in roster.starters" :key="slot.slot" class="slot-group">
         <button
           class="slot"
-          :class="{ open: openSlot === slot.slot, empty: !playerFor(slot.slot), disabled: !canEdit }"
+          :class="{ open: openSlot === slot.slot, empty: !playerFor(slot.slot), disabled: !canEditLineup }"
           @click="toggleSlot(slot)"
         >
           <span class="slot-label tiny">{{ slot.label }}</span>
@@ -243,7 +266,7 @@ function doSwap(irPlayer, incoming) {
             show-opponent
           />
           <span v-else class="faint small">Empty — tap to fill</span>
-          <span v-if="canEdit && !playerFor(slot.slot)?.locked" class="chev faint">›</span>
+          <span v-if="canEditLineup && !playerFor(slot.slot)?.locked" class="chev faint">›</span>
         </button>
 
         <div v-if="openSlot === slot.slot" class="picker">
@@ -289,8 +312,12 @@ function doSwap(irPlayer, incoming) {
           <div class="slot ir-row">
             <span class="slot-label tiny">IR</span>
             <PlayerChip :player="player" />
-            <span v-if="player.healthyOnIr" class="pill pill-warn tiny" title="No longer injured">
-              healthy
+            <span
+              v-if="player.healthyOnIr"
+              class="pill pill-warn tiny"
+              title="No longer qualifies for IR — activate, drop, or swap them"
+            >
+              not eligible
             </span>
             <button
               v-if="irFull && irCandidates.length"
@@ -339,7 +366,7 @@ function doSwap(irPlayer, incoming) {
 
           <div v-if="irOpen" class="picker">
             <div v-if="irCandidates.length === 0" class="empty small">
-              Only players listed Out, IR, PUP, Doubtful or Suspended can go here.
+              Only players listed {{ eligibleList }} can go here.
             </div>
             <button
               v-for="candidate in irCandidates"
@@ -356,7 +383,7 @@ function doSwap(irPlayer, incoming) {
       </template>
     </div>
 
-    <div v-if="canEdit" class="card-footer">
+    <div v-if="canEditLineup" class="card-footer">
       <span class="tiny faint status">
         <template v-if="saving"><span class="spinner" /> Saving…</template>
         <template v-else-if="dirty">Unsaved changes…</template>
@@ -369,6 +396,15 @@ function doSwap(irPlayer, incoming) {
 </template>
 
 <style scoped>
+.ir-block {
+  padding: 0.6rem 1rem;
+  background: var(--warn-soft, rgba(210, 150, 40, 0.12));
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .slot-group {
   border-bottom: 1px solid var(--border);
 }

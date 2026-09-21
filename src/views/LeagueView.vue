@@ -366,6 +366,22 @@ onMounted(async () => {
                    their bench, which is half the fun of reading a roster. -->
               <span class="mono small bench-pts">{{ (player.points ?? 0).toFixed(1) }}</span>
             </div>
+
+            <!-- IR scores nothing either, but who a team has parked there is
+                 part of reading their roster. -->
+            <template v-if="selectedTeam.ir?.length">
+              <div class="bench-label tiny">Injured reserve — scores 0</div>
+              <div v-for="player in selectedTeam.ir" :key="player.id" class="lineup-row bench">
+                <span class="slot-tag tiny">IR</span>
+                <span class="pill pill-pos" :class="`pos-${player.position}`">{{ player.position }}</span>
+                <span class="small pname">
+                  {{ player.name }}
+                  <span v-if="!player.irEligible" class="pill pill-warn tiny">not eligible</span>
+                </span>
+                <span class="tiny faint nfl">{{ player.nflTeam }}</span>
+                <span class="mono small bench-pts">{{ (player.points ?? 0).toFixed(1) }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>

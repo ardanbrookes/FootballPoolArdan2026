@@ -164,6 +164,15 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     healthyOnIr: !isIrEligible(player),
   }))
 
+  /**
+   * Anyone on IR who no longer belongs there. While this isn't empty the
+   * server refuses lineup changes, adds and claims, so the UI says so up
+   * front instead of letting people walk into the error.
+   */
+  const irBlocked = ir
+    .filter((player) => player.healthyOnIr)
+    .map((player) => ({ id: player.id, name: player.name, injuryStatus: player.injuryStatus }))
+
   // IR players are held outside the roster limit.
   const activeCount = rostered.filter((p) => !p.on_ir).length
 
@@ -174,6 +183,7 @@ export async function getTeamRoster(leagueId, teamId, season, week, lockState) {
     starters,
     bench,
     ir,
+    irBlocked,
     counts: {
       total: activeCount,
       max: rosterConfig.maxPlayers,
@@ -219,6 +229,7 @@ export async function setLineup(leagueId, teamId, season, week, assignments, { b
   // manager acting on their own team and stays inside the lock rules.
   if (!bypassLocks) {
     assertAllowed(locks, 'lineup', `${locks.phaseLabel} — lineups can't be changed right now.`)
+    await assertIrLegal(leagueId, teamId, 'change your lineup')
   }
 
   const [rosteredRows, currentRows] = await Promise.all([
@@ -409,6 +420,7 @@ export async function addFreeAgent({
       ? 'Free agency is closed during the waiver period — submit a waiver claim instead.'
       : `${locks.phaseLabel} — free agent moves are closed.`,
   )
+  await assertIrLegal(leagueId, teamId, 'add a free agent')
 
   const target = await getPlayerWithAvailability(leagueId, addPlayerId)
   if (!target) throw httpError('Player not found.', 404)
@@ -555,6 +567,48 @@ export function isIrEligible(player) {
   const status = player?.injury_status ?? player?.injuryStatus ?? null
   if (!status) return false
   return rosterConfig.irEligibleStatuses.includes(status)
+}
+
+/**
+ * Anyone parked on IR who no longer qualifies to be there.
+ *
+ * IR holds players who cannot play. Once someone is healthy again — or never
+ * qualified in the first place, like a suspension — keeping them there is an
+ * extra bench spot, which is exactly what the slot limit exists to prevent.
+ */
+export async function ineligibleOnIr(leagueId, teamId) {
+  const rows = await query(
+    `SELECT p.id, p.full_name, p.injury_status
+       FROM roster_players rp JOIN players p ON p.id = rp.player_id
+      WHERE rp.league_id = @leagueId AND rp.team_id = @teamId AND rp.on_ir = 1`,
+    { leagueId, teamId },
+  )
+  return rows.filter((player) => !isIrEligible(player))
+}
+
+/**
+ * Refuse roster work while someone ineligible sits on IR.
+ *
+ * A block rather than an automatic drop or activation: taking a player off
+ * someone's roster unasked is worse than making the manager choose. Drops, IR
+ * activations and IR swaps stay open, so there is always a way out — and the
+ * way out is the point.
+ */
+export async function assertIrLegal(leagueId, teamId, action = 'make other roster moves') {
+  const blocked = await ineligibleOnIr(leagueId, teamId)
+  if (!blocked.length) return
+
+  const names = blocked
+    .map((p) => `${p.full_name} (${p.injury_status || 'no designation'})`)
+    .join(', ')
+  const err = new Error(
+    `${names} ${blocked.length > 1 ? 'no longer qualify' : 'no longer qualifies'} for ` +
+      `injured reserve. Activate or drop them, or swap them for an injured player, ` +
+      `before you ${action}.`,
+  )
+  err.status = 409
+  err.code = 'IR_INELIGIBLE'
+  throw err
 }
 
 async function getIrCount(leagueId, teamId) {

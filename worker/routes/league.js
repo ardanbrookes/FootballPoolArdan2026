@@ -12,6 +12,7 @@ import {
 import { getPublicConfig, setSetting, getTiming } from '../services/settings.js'
 import { getWeekGames, getTeamGameStatus } from '../services/schedule.js'
 import { getWaiverOrder } from '../services/waivers.js'
+import { isIrEligible } from '../services/roster.js'
 import { getPlayoffPicture } from '../services/playoffs.js'
 import { winProbability } from '../services/winprob.js'
 import { playoffs } from '../config.js'
@@ -332,7 +333,8 @@ router.get('/rosters', async (c) => {
       const starters = await getLineupWithPoints(league.id, team.id, league.season, week)
       const startingIds = new Set(starters.map((s) => s.player?.id).filter(Boolean))
       const roster = await query(
-        `SELECT p.id, p.full_name AS name, p.position, p.nfl_team AS nflTeam, p.injury_status AS injuryStatus
+        `SELECT p.id, p.full_name AS name, p.position, p.nfl_team AS nflTeam,
+                p.injury_status AS injuryStatus, rp.on_ir AS onIr
            FROM roster_players rp JOIN players p ON p.id = rp.player_id
           WHERE rp.league_id = @leagueId AND rp.team_id = @teamId`,
         { leagueId: league.id, teamId: team.id },
@@ -341,7 +343,15 @@ router.get('/rosters', async (c) => {
       return {
         ...team,
         starters: lineup,
-        bench: roster.filter((p) => !startingIds.has(p.id)).map(decorate),
+        bench: roster.filter((p) => !startingIds.has(p.id) && !p.onIr).map(decorate),
+        // IR sits outside the lineup and scores nothing, but reading someone's
+        // roster without seeing who they have parked there tells half a story.
+        ir: roster
+          .filter((p) => p.onIr)
+          .map((p) => ({
+            ...decorate(p),
+            irEligible: isIrEligible({ injury_status: p.injuryStatus }),
+          })),
         // What this lineup actually scored that week — the number people go to
         // the rosters page to compare.
         total: Math.round(lineup.reduce((sum, s) => sum + (s.player?.points ?? 0), 0) * 100) / 100,

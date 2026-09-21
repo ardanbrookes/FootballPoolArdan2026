@@ -118,7 +118,14 @@ export const roster = {
    * Injury designations that qualify for IR. Anything less severe than these
    * (notably Questionable) would turn IR into a free extra bench spot.
    */
-  irEligibleStatuses: ['IR', 'Out', 'PUP', 'Suspended', 'Doubtful', 'DNR', 'NA', 'COV'],
+  /**
+   * Designations severe enough to park on IR.
+   *
+   * Suspended and NA are deliberately absent. A suspension is not an injury,
+   * and NA is Sleeper's catch-all for 'not on the active roster', which is
+   * neither — both amounted to a free extra bench spot.
+   */
+  irEligibleStatuses: ['IR', 'Out', 'PUP', 'Doubtful', 'DNR', 'COV'],
   starterCount: rosterSlots.length,
   get maxPlayers() {
     return rosterSlots.length + this.benchSize
