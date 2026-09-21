@@ -12,6 +12,7 @@ import { loadLeague, requireUser, requireCommissioner } from '../middleware/auth
 import {
   movePlayer,
   setIrFlag,
+  swapTeamIr,
   setPoolStatus,
   setMatchupScore,
   clearMatchupOverride,
@@ -74,6 +75,25 @@ router.post('/roster/ir', async (c) => {
   const { playerId, onIr } = c.get('body') || {}
   if (!playerId) return c.json({ error: 'playerId is required.' }, 400)
   return c.json(await setIrFlag({ leagueId: c.get('league').id, playerId: String(playerId), onIr: onIr === true }))
+})
+
+/** Swap a team's IR occupant for an injured player. Body: { teamId, activatePlayerId, placePlayerId } */
+router.post('/roster/ir-swap', async (c) => {
+  const league = c.get('league')
+  const { teamId, activatePlayerId, placePlayerId } = c.get('body') || {}
+  if (!teamId || !activatePlayerId || !placePlayerId) {
+    return c.json({ error: 'teamId, activatePlayerId and placePlayerId are all required.' }, 400)
+  }
+
+  return c.json(
+    await swapTeamIr({
+      leagueId: league.id,
+      league,
+      teamId: Number(teamId),
+      activatePlayerId: String(activatePlayerId),
+      placePlayerId: String(placePlayerId),
+    }),
+  )
 })
 
 /** Overwrite any team's lineup, ignoring locks. Body: { teamId, week?, assignments } */

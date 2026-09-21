@@ -104,6 +104,12 @@ export const api = {
     movePlayer: (playerId, toTeamId, opts = {}) =>
       request('POST', '/league/commissioner/roster/move', { playerId, toTeamId, ...opts }),
     setIr: (playerId, onIr) => request('POST', '/league/commissioner/roster/ir', { playerId, onIr }),
+    swapIr: (teamId, activatePlayerId, placePlayerId) =>
+      request('POST', '/league/commissioner/roster/ir-swap', {
+        teamId,
+        activatePlayerId,
+        placePlayerId,
+      }),
     setLineup: (teamId, assignments, week) =>
       request('PUT', '/league/commissioner/roster/lineup', { teamId, assignments, week }),
     setPoolStatus: (playerId, status, clearAt) =>

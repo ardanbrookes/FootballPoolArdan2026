@@ -21,10 +21,10 @@
  */
 
 import { get, query, run, batch, stmt } from '../db.js'
-import { systemMessageStatement } from './chat.js'
+import { systemMessageStatement, postSystemMessage } from './chat.js'
 import { statements as poolStatements, nextWaiverClearTime } from './players.js'
 import { recalculateMatchups, recalculateStandings, scoreTeamWeek } from './scoring.js'
-import { ensureLineupRows } from './roster.js'
+import { ensureLineupRows, isIrEligible, swapIr } from './roster.js'
 import { roster as rosterConfig } from '../config.js'
 
 function httpError(message, status = 400, code) {
@@ -207,6 +207,47 @@ export async function movePlayer({ leagueId, league, playerId, toTeamId = null, 
 
   await batch(writes)
   return { playerId, from: from.teamId, to: target?.id ?? null, warnings }
+}
+
+/**
+ * Swap a team's IR occupant for an injured player on their active roster.
+ *
+ * The manager's own version refuses once the week locks, which is exactly
+ * when a commissioner gets asked to step in — and it is the way out for a
+ * team frozen by someone who no longer qualifies for IR. The incoming player
+ * must still genuinely be injured: this moves a problem, it doesn't excuse
+ * one.
+ */
+export async function swapTeamIr({ leagueId, league, teamId, activatePlayerId, placePlayerId }) {
+  const team = await requireTeam(leagueId, teamId)
+
+  const result = await swapIr({
+    leagueId,
+    teamId: team.id,
+    season: league.season,
+    week: league.current_week,
+    activatePlayerId,
+    placePlayerId,
+    bypassLocks: true,
+  })
+
+  const [activated, placed] = await Promise.all([
+    get('SELECT full_name FROM players WHERE id = @id', { id: activatePlayerId }),
+    get('SELECT full_name, injury_status FROM players WHERE id = @id', { id: placePlayerId }),
+  ])
+
+  await postSystemMessage({
+    leagueId,
+    teamId: team.id,
+    eventType: 'ir',
+    body:
+      `Commissioner swapped ${team.name}'s injured reserve — ` +
+      `${placed?.full_name} (${placed?.injury_status || 'no designation'}) to IR, ` +
+      `${activated?.full_name} back on the bench.`,
+    meta: { teamId: team.id, activatePlayerId, placePlayerId, action: 'ir-swap' },
+  })
+
+  return { ...result, team: team.name }
 }
 
 /** Put a team's IR occupant back on the active roster, or vice versa. */
@@ -815,7 +856,11 @@ export async function listAllRosters(leagueId) {
 
   return teams.map((team) => ({
     ...team,
-    players: players.filter((p) => p.team_id === team.id),
+    // Eligibility travels with the player so the console can offer a valid
+    // swap partner rather than letting the commissioner guess.
+    players: players
+      .filter((p) => p.team_id === team.id)
+      .map((p) => ({ ...p, irEligible: isIrEligible(p) })),
   }))
 }
 

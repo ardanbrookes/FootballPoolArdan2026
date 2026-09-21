@@ -727,9 +727,21 @@ export async function activateFromIr({ leagueId, teamId, season, week, playerId 
  * second injury costs you a player purely for bookkeeping reasons. Because the
  * two moves net out, the roster count never changes and no drop is needed.
  */
-export async function swapIr({ leagueId, teamId, season, week, activatePlayerId, placePlayerId }) {
+export async function swapIr({
+  leagueId,
+  teamId,
+  season,
+  week,
+  activatePlayerId,
+  placePlayerId,
+  bypassLocks = false,
+}) {
   const locks = await getLockState(leagueId)
-  assertAllowed(locks, 'lineup', `${locks.phaseLabel} — roster moves are closed.`)
+  // A commissioner swaps precisely when the manager can't: mid-lock, to free
+  // a team frozen by someone who no longer belongs on IR.
+  if (!bypassLocks) {
+    assertAllowed(locks, 'lineup', `${locks.phaseLabel} — roster moves are closed.`)
+  }
 
   const [leaving, arriving] = await Promise.all([
     get(
@@ -760,7 +772,7 @@ export async function swapIr({ leagueId, teamId, season, week, activatePlayerId,
 
   // The arriving player is coming off the active roster, so they must be movable
   // — you can't shelve someone whose game is already under way.
-  assertPlayerMovable(locks, arriving, 'move to IR')
+  if (!bypassLocks) assertPlayerMovable(locks, arriving, 'move to IR')
 
   await batch([
     stmt(

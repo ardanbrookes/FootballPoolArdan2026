@@ -87,11 +87,13 @@ onMounted(load)
 const selected = ref(null)
 const moveTarget = ref('')
 const moveNote = ref('')
+const swapTarget = ref('')
 
 function pick(player, teamId, teamName) {
   selected.value = selected.value?.id === player.id ? null : { ...player, teamId, teamName }
   moveTarget.value = ''
   moveNote.value = ''
+  swapTarget.value = ''
 }
 
 const moveDestinations = computed(() =>
@@ -116,6 +118,40 @@ function doMove() {
         () => api.commish.movePlayer(player.id, toTeamId, { note: moveNote.value || undefined }),
         `${player.full_name} moved.`,
       ).then(() => (selected.value = null)),
+  }
+}
+
+/**
+ * Injured players on the same roster who could take the IR slot.
+ *
+ * The swap is the way to free a team frozen by someone who no longer
+ * qualifies for IR, without anybody being dropped.
+ */
+const swapCandidates = computed(() => {
+  const team = teams.value.find((t) => t.id === selected.value?.teamId)
+  return (team?.players ?? []).filter((p) => !p.on_ir && p.irEligible)
+})
+
+function doIrSwap() {
+  const player = selected.value
+  const incoming = swapCandidates.value.find((p) => p.id === swapTarget.value)
+  if (!incoming) return
+
+  confirm.value = {
+    title: 'Swap injured reserve?',
+    message: `${incoming.full_name} goes to IR and ${player.full_name} comes back to the bench.`,
+    detail:
+      'Nobody is dropped and the roster count is unchanged. It ignores the lock, so it works' +
+      ' mid-week, and it is announced in the league feed.',
+    confirmLabel: 'Swap',
+    run: () =>
+      act(
+        () => api.commish.swapIr(player.teamId, player.id, incoming.id),
+        `${player.full_name} is back on the bench, ${incoming.full_name} is on IR.`,
+      ).then(() => {
+        selected.value = null
+        swapTarget.value = ''
+      }),
   }
 }
 
@@ -378,6 +414,27 @@ const notCommissioner = computed(() => session.ready && !session.user?.isCommiss
               <input v-model="moveNote" placeholder="Reason (optional, shown in chat)" />
               <button class="btn btn-primary btn-sm" :disabled="busy" @click="doMove">Apply</button>
             </div>
+            <!-- The way out for a team frozen by someone who no longer belongs
+                 on IR: nobody is dropped, and the roster count is unchanged. -->
+            <div v-if="selected.on_ir" class="row add-row">
+              <select v-model="swapTarget">
+                <option value="">Swap for an injured player…</option>
+                <option v-for="p in swapCandidates" :key="p.id" :value="p.id">
+                  {{ p.full_name }} ({{ p.injury_status }})
+                </option>
+              </select>
+              <button
+                class="btn btn-primary btn-sm"
+                :disabled="busy || !swapTarget"
+                @click="doIrSwap"
+              >
+                Swap
+              </button>
+            </div>
+            <p v-if="selected.on_ir && !swapCandidates.length" class="tiny faint">
+              Nobody else on this roster currently qualifies for IR, so there is no one to swap in.
+            </p>
+
             <div class="row">
               <button class="btn btn-ghost btn-sm" :disabled="busy" @click="toggleIr(selected)">
                 {{ selected.on_ir ? 'Activate from IR' : 'Place on IR' }}
