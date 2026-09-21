@@ -13,6 +13,7 @@ import api from '@/api/client.js'
 import { useLeagueStore } from '@/stores/league.js'
 import StandingsTable from '@/components/StandingsTable.vue'
 import PlayoffPicture from '@/components/PlayoffPicture.vue'
+import MatchupScoreboard from '@/components/MatchupScoreboard.vue'
 
 const league = useLeagueStore()
 
@@ -34,6 +35,67 @@ const weeks = computed(() => overview.value?.weeks ?? [])
 const activeWeek = computed(() => weeks.value.find((w) => w.week === selectedWeek.value) ?? null)
 
 const spots = computed(() => playoffs.value?.spots ?? 0)
+
+const weekMatchups = computed(() => activeWeek.value?.matchups ?? [])
+
+/**
+ * Any game in the league, in the same scoreboard the home page uses.
+ *
+ * Tracked by a team rather than a matchup id: that is what the endpoint
+ * takes, and it survives the week changing underneath — switching weeks
+ * keeps you on a real game rather than an id belonging to another week.
+ */
+const viewerTeamId = ref(null)
+const viewerDetail = ref(null)
+const viewerLoading = ref(false)
+/** Set once the manager picks a game, so we stop defaulting back to theirs. */
+const matchupPicked = ref(false)
+
+const viewerHeading = computed(() =>
+  selectedWeek.value ? 'Week ' + selectedWeek.value + ' matchup' : 'Matchup',
+)
+
+const viewerEmpty = computed(() =>
+  viewerLoading.value ? 'Loading matchup…' : 'No matchup to show.',
+)
+
+async function loadViewer() {
+  const games = weekMatchups.value
+  if (!games.length || !selectedWeek.value) {
+    viewerDetail.value = null
+    return
+  }
+
+  // Default to the viewer's own game, and fall back to it whenever the
+  // current pick isn't in this week.
+  const inWeek = games.some(
+    (m) => m.home_id === viewerTeamId.value || m.away_id === viewerTeamId.value,
+  )
+  if (!inWeek || !matchupPicked.value) {
+    const mine = games.find((m) => m.home_id === myTeamId.value || m.away_id === myTeamId.value)
+    viewerTeamId.value = (mine ?? games[0]).home_id
+  }
+
+  viewerLoading.value = true
+  try {
+    const data = await api.matchupDetail(selectedWeek.value, viewerTeamId.value)
+    viewerDetail.value = data.matchup
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    viewerLoading.value = false
+  }
+}
+
+function pickMatchup(teamId) {
+  matchupPicked.value = true
+  viewerTeamId.value = teamId
+  loadViewer()
+}
+
+// The week picker drives this, and it needs the viewer's own team before it
+// can choose a sensible default.
+watch([selectedWeek, myTeamId], loadViewer)
 
 async function load() {
   loading.value = true
@@ -80,11 +142,12 @@ function pickTeam(teamId) {
   selectedTeamId.value = teamId
 }
 
-async function loadRosters() {
-  if (rosters.value.length || rostersLoading.value) return
+/** Rosters and points for one week. No argument means whichever week the server picks. */
+async function loadRosters(week = null) {
+  if (rostersLoading.value) return
   rostersLoading.value = true
   try {
-    const data = await api.rosters()
+    const data = await api.rosters(week ?? undefined)
     rosters.value = data.teams
     rostersWeek.value = data.week
     applyDefaultTeam()
@@ -94,6 +157,15 @@ async function loadRosters() {
     rostersLoading.value = false
   }
 }
+
+function pickRosterWeek(week) {
+  if (week === rostersWeek.value) return
+  rostersWeek.value = week
+  loadRosters(week)
+}
+
+/** A chip only says '3', so the hover text carries what that means. */
+const weekTitle = (week) => (week.isPlayoff ? 'Championship week' : 'Week ' + week.week)
 
 const weekLabel = (week) => (playoffs.value && week.isPlayoff ? `${week.week}★` : String(week.week))
 
@@ -184,6 +256,34 @@ onMounted(async () => {
         </div>
       </div>
 
+      <!-- Any game in the league, in the scoreboard the home page uses. It
+           follows the week picker above. -->
+      <div v-if="weekMatchups.length" class="stack">
+        <div class="viewer-picker">
+          <span class="tiny faint pick-label">Viewing</span>
+          <button
+            v-for="m in weekMatchups"
+            :key="m.home_id"
+            class="week-chip game-chip"
+            :class="{
+              active: viewerTeamId === m.home_id || viewerTeamId === m.away_id,
+              mine: m.home_id === myTeamId || m.away_id === myTeamId,
+            }"
+            @click="pickMatchup(m.home_id)"
+          >
+            {{ m.away_abbr }} @ {{ m.home_abbr }}
+          </button>
+        </div>
+
+        <MatchupScoreboard
+          v-if="viewerDetail"
+          :matchup="viewerDetail"
+          :my-team-id="myTeamId"
+          :heading="viewerHeading"
+        />
+        <div v-else class="card"><div class="empty">{{ viewerEmpty }}</div></div>
+      </div>
+
       <!-- Rosters as master-detail. An expanding grid stretched whichever row
            held the open card, leaving gaps beside it; a fixed team list with one
            detail pane never does that. -->
@@ -199,6 +299,19 @@ onMounted(async () => {
           >
             Draft board ↗
           </a>
+        </div>
+
+        <div class="week-picker">
+          <button
+            v-for="w in weeks"
+            :key="w.week"
+            class="week-chip"
+            :class="{ active: w.week === rostersWeek, playoff: w.isPlayoff }"
+            :title="weekTitle(w)"
+            @click="pickRosterWeek(w.week)"
+          >
+            {{ weekLabel(w) }}
+          </button>
         </div>
 
         <div v-if="rostersLoading && !rosters.length" class="empty">Loading rosters…</div>
@@ -315,6 +428,28 @@ onMounted(async () => {
   border-color: var(--accent);
   color: #06120c;
   font-weight: 700;
+}
+
+.viewer-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.pick-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 0.2rem;
+}
+
+.game-chip {
+  font-family: var(--mono);
+}
+
+.game-chip.mine {
+  border-color: var(--border-strong);
+  color: var(--accent-hover);
 }
 
 /* ---- games ---- */

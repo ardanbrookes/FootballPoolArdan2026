@@ -169,7 +169,9 @@ const kickoffLabel = (iso) => formatKickoff(iso, league.config?.timing?.timezone
  *                    partial lock (early_game_lock) and the full lock
  *                    (blanket_lock). Once games are being played the scoreboard
  *                    is what you came for, so the matchup leads, with the
- *                    lineup editor right below it for Sunday moves.
+ *                    lineup editor right below it for Sunday moves. Last week's
+ *                    results drop off entirely here — the moment this week
+ *                    kicks off, last week stops being the news.
  */
 const layout = computed(() => {
   switch (league.phase) {
@@ -177,7 +179,7 @@ const layout = computed(() => {
       return ['results', 'roster', 'matchup']
     case 'early_game_lock':
     case 'blanket_lock':
-      return ['matchup', 'roster', 'results']
+      return ['matchup', 'roster']
     default:
       // open and preseason: managing the roster is the job.
       return ['roster', 'matchup', 'results']
@@ -281,7 +283,7 @@ onMounted(async () => {
           <span v-if="lastWeek.length" class="tiny faint">Week {{ lastWeekNumber }}</span>
         </div>
         <div class="card-body">
-          <div v-if="lastWeek.length" class="grid grid-2">
+          <div v-if="lastWeek.length" class="results-grid">
             <MatchupCard
               v-for="matchup in lastWeek"
               :key="matchup.id"
@@ -299,6 +301,27 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* Four across, then 2x2, then a single column — never three with a stray on
+   its own row. The shared auto-fit grid packed in whatever fitted, which on a
+   laptop came out as 3 + 1. */
+.results-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .results-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .results-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .lock-list {
   list-style: none;
   margin: 0;
