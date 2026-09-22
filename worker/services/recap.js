@@ -292,7 +292,7 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
   )
   if (!teams.length) return null
 
-  const [matchups, previousMatchups, lineupRows, rosterRows] = await Promise.all([
+  const [matchups, previousMatchups, lineupRows, rosterRows, ownedRows] = await Promise.all([
     query(
       `SELECT id, home_team_id, away_team_id, home_score, away_score FROM matchups
         WHERE league_id = @leagueId AND season = @season AND week = @week`,
@@ -320,6 +320,9 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
         WHERE rp.league_id = @leagueId AND rp.on_ir = 0`,
       { leagueId },
     ),
+    // Everyone owned, IR included: the free agent award turns on who was
+    // genuinely unclaimed, and an IR player is not that.
+    query('SELECT player_id FROM roster_players WHERE league_id = @leagueId', { leagueId }),
   ])
 
   if (!matchups.length) return null
@@ -400,6 +403,69 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
     }
   })
 
+  // Last week's numbers for the same players, for a player's own bounce back.
+  const previousPlayerPoints =
+    week > 1
+      ? await getWeekPoints(season, week - 1, 'regular', undefined, {
+          playerIds: rosterRows.map((p) => p.id),
+        })
+      : new Map()
+
+  // League-wide stat lines. This is the one lookup that can't be scoped to
+  // rostered players: the free agent award is about who was sitting there
+  // unclaimed while somebody started a worse player.
+  const everyone = await getWeekPoints(season, week, 'regular')
+  const owned = new Set(ownedRows.map((row) => row.player_id))
+  const startedIds = new Set(started.map((p) => p.id))
+
+  const teamNameFor = (teamId) => teams.find((t) => t.id === teamId)?.name ?? null
+
+  const benchWarmers = rosterRows
+    .filter((p) => !startedIds.has(p.id))
+    .map((p) => ({
+      id: p.id,
+      name: p.full_name,
+      position: p.position,
+      nflTeam: p.nfl_team,
+      team: teamNameFor(p.team_id),
+      points: round1(points.get(p.id) ?? 0),
+    }))
+
+  const bounceBacks = rosterRows
+    .map((p) => ({
+      id: p.id,
+      name: p.full_name,
+      position: p.position,
+      nflTeam: p.nfl_team,
+      team: teamNameFor(p.team_id),
+      points: round1(points.get(p.id) ?? 0),
+      previousPoints: round1(previousPlayerPoints.get(p.id) ?? 0),
+      change: round1((points.get(p.id) ?? 0) - (previousPlayerPoints.get(p.id) ?? 0)),
+    }))
+    .filter((p) => p.points > 0)
+
+  let freeAgent = null
+  let bestFreeId = null
+  let bestFreePoints = 0
+  for (const [playerId, scored] of everyone) {
+    if (owned.has(playerId) || scored <= bestFreePoints) continue
+    bestFreeId = playerId
+    bestFreePoints = scored
+  }
+  if (bestFreeId) {
+    const row = await get(
+      'SELECT full_name, position, nfl_team FROM players WHERE id = @id',
+      { id: bestFreeId },
+    )
+    freeAgent = {
+      id: bestFreeId,
+      name: row?.full_name ?? bestFreeId,
+      position: row?.position ?? null,
+      nflTeam: row?.nfl_team ?? null,
+      points: round1(bestFreePoints),
+    }
+  }
+
   const sections = {
     managers: {
       best: pick(teamLines, 'leftOnBench', 'asc'),
@@ -430,6 +496,15 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
         'diff',
         'asc',
       ),
+    },
+    // The week's individual honours, measured in points rather than against
+    // a projection.
+    awards: {
+      playerOfWeek: pick(startedWithNumbers, 'points', 'desc'),
+      benchwarmer: pick(benchWarmers, 'points', 'desc'),
+      freeAgent,
+      // A player's own swing, which is a different story from the team's.
+      bounceBack: week > 1 ? pick(bounceBacks, 'change', 'desc') : null,
     },
   }
 
@@ -527,6 +602,26 @@ export function recapChatBody(recap) {
   if (sections.players.bust) {
     const bust = sections.players.bust
     lines.push(`Bust: ${bust.name} ${bust.points} (${signed(bust.diff)} vs projection)`)
+  }
+
+  const awards = sections.awards ?? {}
+  if (awards.playerOfWeek) {
+    const star = awards.playerOfWeek
+    lines.push(`Player of the week: ${star.name} ${star.points} (${star.team})`)
+  }
+  if (awards.benchwarmer) {
+    const warm = awards.benchwarmer
+    lines.push(`Benchwarmer of the week: ${warm.name} ${warm.points} on ${warm.team}'s bench`)
+  }
+  if (awards.freeAgent) {
+    lines.push(`Free agent of the week: ${awards.freeAgent.name} ${awards.freeAgent.points}, unclaimed`)
+  }
+  if (awards.bounceBack) {
+    const back = awards.bounceBack
+    lines.push(
+      `Biggest bounce back: ${back.name} ${back.points} after ${back.previousPoints} last week ` +
+        `(${signed(back.change)})`,
+    )
   }
 
   const contenders = recap.playoffOdds.filter((t) => t.odds > 0 && t.odds < 100)

@@ -14,6 +14,8 @@ const props = defineProps({
 })
 
 const s = computed(() => props.recap.sections)
+// Recaps built before the individual awards existed simply don't have them.
+const awards = computed(() => props.recap.sections.awards ?? {})
 
 const signed = (n) => (n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1))
 
@@ -21,10 +23,14 @@ const signed = (n) => (n > 0 ? `+${n.toFixed(1)}` : n.toFixed(1))
  * The pairs, built here rather than in the template: each is the same shape,
  * and a null half (no previous week to compare against) drops out cleanly.
  */
-const pairs = computed(() => {
+const cards = computed(() => {
   const out = []
   const push = (label, good, bad) => {
-    if (good && bad) out.push({ label, good, bad })
+    if (good && bad) out.push({ label, sides: [good, bad] })
+  }
+  /** Some honours have no opposite worth printing. */
+  const one = (label, side) => {
+    if (side) out.push({ label, sides: [side] })
   }
 
   push(
@@ -114,7 +120,45 @@ const pairs = computed(() => {
   }
 
   push(
-    'Players',
+    'Points leaders',
+    awards.value.playerOfWeek && {
+      title: 'Player of the week',
+      name: awards.value.playerOfWeek.name,
+      sub: `${awards.value.playerOfWeek.team} · started`,
+      value: awards.value.playerOfWeek.points.toFixed(1),
+    },
+    awards.value.benchwarmer && {
+      title: 'Benchwarmer',
+      name: awards.value.benchwarmer.name,
+      sub: `${awards.value.benchwarmer.team} · benched`,
+      value: awards.value.benchwarmer.points.toFixed(1),
+    },
+  )
+
+  one(
+    'Free agent of the week',
+    awards.value.freeAgent && {
+      title: 'Unclaimed all week',
+      name: awards.value.freeAgent.name,
+      sub: [awards.value.freeAgent.position, awards.value.freeAgent.nflTeam]
+        .filter(Boolean)
+        .join(' · '),
+      value: awards.value.freeAgent.points.toFixed(1),
+    },
+  )
+
+  one(
+    'Biggest bounce back',
+    awards.value.bounceBack && {
+      title: `${awards.value.bounceBack.previousPoints.toFixed(1)} last week`,
+      name: awards.value.bounceBack.name,
+      sub: `${awards.value.bounceBack.team} · ${awards.value.bounceBack.points.toFixed(1)} this week`,
+      value: signed(awards.value.bounceBack.change),
+    },
+  )
+
+  push(
+    'Against projection — players',
     s.value.players.overachiever && {
       title: 'Overachiever',
       name: s.value.players.overachiever.name,
@@ -141,10 +185,10 @@ const settled = computed(() => odds.value.some((t) => t.settled))
     <div class="recap-head tiny">Week {{ recap.week }} in numbers</div>
 
     <div class="recap-grid">
-      <div v-for="pair in pairs" :key="pair.label" class="pair">
-        <div class="pair-label tiny faint">{{ pair.label }}</div>
-        <div class="pair-body">
-          <div v-for="side in [pair.good, pair.bad]" :key="side.title" class="side">
+      <div v-for="card in cards" :key="card.label" class="pair">
+        <div class="pair-label tiny faint">{{ card.label }}</div>
+        <div class="pair-body" :class="{ solo: card.sides.length === 1 }">
+          <div v-for="side in card.sides" :key="side.title" class="side">
             <div class="tiny faint">{{ side.title }}</div>
             <div class="small bold name" :class="{ mine: side.teamId && side.teamId === myTeamId }">
               {{ side.name }}
@@ -225,6 +269,10 @@ const settled = computed(() => odds.value.some((t) => t.settled))
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.5rem;
+}
+
+.pair-body.solo {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .side {
