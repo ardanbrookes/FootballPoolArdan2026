@@ -215,3 +215,24 @@ export async function placeTeamsOnWaivers(leagueId, nflTeams, clearAtIso) {
   )
   return { count: result?.changes ?? 0 }
 }
+
+/**
+ * Point everyone currently on waivers at the next processing run.
+ *
+ * Each row's clear time is a copy of "when the next run is", so moving the
+ * waiver schedule leaves every copy stale — and a stale copy quietly reads as
+ * free agency the moment the old time passes. That is exactly how a whole pool
+ * went to free agency on a Tuesday morning while the real run was still a day
+ * away: the rows had been stamped at the Sunday lock, under the old schedule.
+ *
+ * Idempotent and cheap: after one pass nothing matches the WHERE clause.
+ */
+export async function refreshWaiverClearTimes(leagueId, clearAtIso) {
+  const result = await run(
+    `UPDATE player_pool_state
+        SET waivers_clear_at = @clearAt, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE league_id = @leagueId AND waivers_clear_at < @clearAt`,
+    { leagueId, clearAt: clearAtIso },
+  )
+  return { count: result?.changes ?? 0 }
+}

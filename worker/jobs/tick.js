@@ -35,7 +35,11 @@ import { getTiming } from '../services/settings.js'
 import { getLockState, PHASE } from '../services/locks.js'
 import { announcePhaseChange, postSystemMessage } from '../services/chat.js'
 import { getSyncEntry, recordSync } from '../services/sleeper.js'
-import { placeTeamsOnWaivers, nextWaiverClearTime } from '../services/players.js'
+import {
+  placeTeamsOnWaivers,
+  nextWaiverClearTime,
+  refreshWaiverClearTimes,
+} from '../services/players.js'
 import { isIrEligible } from '../services/roster.js'
 import { ingestNews, TEAM_ROTATION } from '../services/news.js'
 import {
@@ -290,6 +294,23 @@ export async function runTick({ force = null } = {}) {
         },
         ran,
       )
+    }
+
+    // While a waiver run is still ahead of us, everyone unrostered is
+    // claim-only until it happens. The clear time stored on each row is a
+    // copy of that instant, so a schedule change leaves stale copies that
+    // read as free agency early. Put them right while the run is pending.
+    if (cycle.waiverProcessAt > nowIso) {
+      try {
+        const repaired = await refreshWaiverClearTimes(league.id, cycle.waiverProcessAt)
+        if (repaired.count) {
+          console.log(`[tick] moved ${repaired.count} stale waiver rows to ${cycle.waiverProcessAt}`)
+          ran.push({ leagueId: league.id, job: 'waiver-clear-repair', updated: repaired.count })
+        }
+      } catch (err) {
+        console.error(`[tick] waiver clear repair failed for league ${league.id}:`, err)
+        ran.push({ leagueId: league.id, job: 'waiver-clear-repair', error: String(err.message || err) })
+      }
     }
 
     await waiverKickedOffTeams(league, lockState, timing, force, ran)
