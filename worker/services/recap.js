@@ -315,7 +315,7 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
     // IR players can't be started, so they can't be part of a lineup anyone
     // could have set.
     query(
-      `SELECT rp.team_id, p.id, p.full_name, p.position, p.fantasy_positions, p.nfl_team
+      `SELECT rp.team_id, rp.acquired_at, p.id, p.full_name, p.position, p.fantasy_positions, p.nfl_team
          FROM roster_players rp JOIN players p ON p.id = rp.player_id
         WHERE rp.league_id = @leagueId AND rp.on_ir = 0`,
       { leagueId },
@@ -411,6 +411,19 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
         })
       : new Map()
 
+  // When last week's football started. A player acquired after that wasn't
+  // anybody's last week, however well they did.
+  const previousWeekStart =
+    week > 1
+      ? (
+          await get(
+            `SELECT MIN(kickoff_at) AS first FROM nfl_games
+              WHERE season = @season AND season_type = 'regular' AND week = @week`,
+            { season, week: week - 1 },
+          )
+        )?.first ?? null
+      : null
+
   // League-wide stat lines. This is the one lookup that can't be scoped to
   // rostered players: the free agent award is about who was sitting there
   // unclaimed while somebody started a worse player.
@@ -431,6 +444,17 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
       points: round1(points.get(p.id) ?? 0),
     }))
 
+  /**
+   * A bounce back is a player who was here last week and did badly, not a
+   * waiver pickup measured against a week they weren't owned for. So both
+   * halves of the comparison have to be real: they scored something last
+   * week, and they were on that roster when they scored it.
+   *
+   * Roster history isn't stored, so ownership is judged by when the player
+   * joined the roster they're on now. That also excludes anyone traded this
+   * week, since a trade resets the same timestamp — the conservative side of
+   * the line to be on.
+   */
   const bounceBacks = rosterRows
     .map((p) => ({
       id: p.id,
@@ -438,11 +462,17 @@ export async function buildWeekRecap(leagueId, season, week, { store = true } = 
       position: p.position,
       nflTeam: p.nfl_team,
       team: teamNameFor(p.team_id),
+      acquiredAt: p.acquired_at,
       points: round1(points.get(p.id) ?? 0),
       previousPoints: round1(previousPlayerPoints.get(p.id) ?? 0),
       change: round1((points.get(p.id) ?? 0) - (previousPlayerPoints.get(p.id) ?? 0)),
     }))
-    .filter((p) => p.points > 0)
+    .filter(
+      (p) =>
+        p.points > 0 &&
+        p.previousPoints > 0 &&
+        (!previousWeekStart || (p.acquiredAt && p.acquiredAt <= previousWeekStart)),
+    )
 
   let freeAgent = null
   let bestFreeId = null
