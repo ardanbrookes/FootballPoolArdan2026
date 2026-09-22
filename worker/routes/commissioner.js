@@ -26,6 +26,7 @@ import {
   listMatchupsForWeek,
 } from '../services/commissioner.js'
 import { setLineup } from '../services/roster.js'
+import { buildWeekRecap } from '../services/recap.js'
 
 const router = new Hono()
 router.use('*', loadLeague, requireUser, requireCommissioner)
@@ -186,6 +187,24 @@ router.post('/undo/trade', async (c) => {
   const { tradeId } = c.get('body') || {}
   if (!tradeId) return c.json({ error: 'tradeId is required.' }, 400)
   return c.json(await reverseTrade({ leagueId: league.id, league, tradeId: Number(tradeId) }))
+})
+
+/**
+ * Rebuild a week's recap. Body: { week? }
+ *
+ * The numbers that depend on rosters — optimal lineups, points left on the
+ * bench — are measured against the rosters as they are NOW, so a rebuild
+ * days later is an approximation of the week it describes.
+ */
+router.post('/recap', async (c) => {
+  const league = c.get('league')
+  const { week } = c.get('body') || {}
+  const target = Number(week ?? league.current_week - 1)
+  if (!Number.isFinite(target) || target < 1) return c.json({ error: 'A week of 1 or more is required.' }, 400)
+
+  const recap = await buildWeekRecap(league.id, league.season, target)
+  if (!recap) return c.json({ error: `Week ${target} has no finished matchups to recap.` }, 409)
+  return c.json({ week: target, recap })
 })
 
 /** Move the league to a different week. Body: { week } */

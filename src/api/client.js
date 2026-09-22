@@ -51,6 +51,7 @@ export const api = {
   nflGames: (week) => request('GET', `/league/nfl-games${qs({ week })}`),
   rosters: (week) => request('GET', `/league/rosters${qs({ week })}`),
   transactions: (limit) => request('GET', `/league/transactions${qs({ limit })}`),
+  recap: (week) => request('GET', `/league/recap${qs({ week })}`),
   waiverOrder: () => request('GET', '/league/waiver-order'),
 
   // My team
@@ -123,6 +124,7 @@ export const api = {
       request('POST', '/league/commissioner/undo/transaction', { transactionId }),
     undoTrade: (tradeId) => request('POST', '/league/commissioner/undo/trade', { tradeId }),
     setWeek: (week) => request('POST', '/league/commissioner/week', { week }),
+    rebuildRecap: (week) => request('POST', '/league/commissioner/recap', { week }),
   },
 }
 

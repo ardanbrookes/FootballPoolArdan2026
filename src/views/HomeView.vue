@@ -11,6 +11,7 @@ import { useLeagueStore } from '@/stores/league.js'
 import LineupEditor from '@/components/LineupEditor.vue'
 import MatchupCard from '@/components/MatchupCard.vue'
 import MatchupScoreboard from '@/components/MatchupScoreboard.vue'
+import WeekRecap from '@/components/WeekRecap.vue'
 import ChatBox from '@/components/ChatBox.vue'
 import { formatKickoff } from '@/utils/time.js'
 
@@ -19,6 +20,9 @@ const league = useLeagueStore()
 const roster = ref(null)
 const matchupDetail = ref(null)
 const lastWeek = ref([])
+// Built at the Monday reset and stored, so this is a read rather than a
+// calculation — see services/recap.js for why it can't be computed on demand.
+const recap = ref(null)
 const nflGames = ref([])
 const loading = ref(true)
 const saving = ref(false)
@@ -78,8 +82,9 @@ async function loadAll({ quiet = false } = {}) {
     nflGames.value = gamesData.games
 
     if (week > 1) {
-      const previous = await api.matchups(week - 1)
+      const [previous, recapData] = await Promise.all([api.matchups(week - 1), api.recap(week - 1)])
       lastWeek.value = previous.matchups
+      recap.value = recapData.recap
     }
   } catch (err) {
     if (!quiet) error.value = err.message
@@ -296,6 +301,8 @@ onMounted(async () => {
           <div v-else class="empty">
             {{ league.currentWeek <= 1 ? "The season hasn't started yet." : 'No results for last week.' }}
           </div>
+
+          <WeekRecap v-if="recap" :recap="recap" :my-team-id="myTeamId" />
         </div>
       </div>
     </template>

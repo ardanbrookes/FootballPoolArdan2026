@@ -12,6 +12,7 @@ import {
 import { getPublicConfig, setSetting, getTiming } from '../services/settings.js'
 import { getWeekGames, getTeamGameStatus } from '../services/schedule.js'
 import { getWaiverOrder } from '../services/waivers.js'
+import { getWeekRecap } from '../services/recap.js'
 import { isIrEligible } from '../services/roster.js'
 import { getPlayoffPicture } from '../services/playoffs.js'
 import { winProbability } from '../services/winprob.js'
@@ -360,6 +361,25 @@ router.get('/rosters', async (c) => {
   )
 
   return c.json({ week, lockState, teams: withRosters })
+})
+
+/**
+ * Last week's recap. Defaults to the week that just finished, which is the
+ * one the home page has room for.
+ */
+router.get('/recap', requireUser, async (c) => {
+  const league = c.get('league')
+  const week = Number(c.req.query('week') ?? league.current_week - 1)
+  if (!Number.isFinite(week) || week < 1) return c.json({ week, recap: null })
+
+  // The home page loads this alongside last week's results, so a missing
+  // recap must read as 'nothing to show' rather than failing the whole page.
+  try {
+    return c.json({ week, recap: await getWeekRecap(league.id, league.season, week) })
+  } catch (err) {
+    console.error('[recap] lookup failed:', err.message)
+    return c.json({ week, recap: null })
+  }
 })
 
 /** Recent adds, drops and trades across the league. */

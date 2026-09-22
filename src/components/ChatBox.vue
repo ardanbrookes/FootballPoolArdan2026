@@ -89,6 +89,7 @@ const EVENT_ICON = {
   drop: '−',
   waiver: '✓',
   ir: '✚',
+  recap: '📊',
 }
 
 /**
@@ -192,7 +193,8 @@ onUnmounted(() => {
         <div v-else-if="item.kind === 'system'" class="msg system">
           <span class="ev-icon" :class="`ev-${item.eventType}`">{{ EVENT_ICON[item.eventType] ?? '•' }}</span>
           <div class="sys-body">
-            <span class="small">{{ item.body }}</span>
+            <!-- The recap is written as several lines; everything else is one. -->
+            <span class="small sys-text">{{ item.body }}</span>
             <span class="tiny faint time">{{ time(item.createdAt) }}</span>
           </div>
         </div>
@@ -346,6 +348,13 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   color: var(--text-muted);
+}
+
+.sys-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ev-icon {

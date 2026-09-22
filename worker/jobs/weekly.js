@@ -26,6 +26,8 @@ import {
 import { syncWeek } from '../services/schedule.js'
 import { pruneNews, clearUnresolvedXref } from '../services/news.js'
 import { expirePendingTrades } from '../services/trades.js'
+import { buildWeekRecap, recapChatBody } from '../services/recap.js'
+import { postSystemMessage } from '../services/chat.js'
 
 function allLeagues() {
   return query('SELECT id, season, season_type, current_week, playoff_week FROM leagues')
@@ -153,11 +155,32 @@ export async function runWeekReset({ leagueId } = {}) {
       console.log(`[week-reset] league ${league.id}: bracket set — ${bracket.detail.join('; ')}`)
     }
 
+    // The week's story, built now rather than on demand: it measures what
+    // each manager could have scored against the roster they actually had,
+    // and rosters reopen the moment this function returns. Isolated, because
+    // a recap is worth less than the reset it would otherwise take down.
+    let recapPosted = false
+    try {
+      const recap = await buildWeekRecap(league.id, league.season, finishedWeek)
+      if (recap) {
+        await postSystemMessage({
+          leagueId: league.id,
+          eventType: 'recap',
+          body: recapChatBody(recap),
+          meta: { week: finishedWeek },
+        })
+        recapPosted = true
+      }
+    } catch (err) {
+      console.error(`[week-reset] recap failed for league ${league.id}:`, err.message)
+    }
+
     results.push({
       leagueId: league.id,
       finishedWeek,
       nextWeek,
       playoffMatchupsCreated: bracket.created,
+      recapPosted,
     })
     await recordSync(`week-reset:${league.id}`, 'ok', `week ${finishedWeek} final -> week ${nextWeek}`)
     console.log(
