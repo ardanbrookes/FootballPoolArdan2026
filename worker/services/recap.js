@@ -22,11 +22,13 @@ import { canPlayerFillSlot } from './roster.js'
 import { getWeekPoints, getWeekProjections, getRestOfSeasonPoints } from './scoring.js'
 
 /**
- * Enough runs that the same week doesn't swing by five points between
- * rebuilds. At 2000 the noise was visible; the whole simulation is still a
- * few hundred thousand draws, once a week.
+ * Runs per rebuild. At this count a team's odds are good to about a point,
+ * which is why they're reported as whole percentages — a decimal place would
+ * be claiming precision the simulation doesn't have. It is also the only
+ * CPU-bound work in the cron, so there's no reason to buy accuracy nobody
+ * can read.
  */
-const SIMULATIONS = 5000
+const SIMULATIONS = 2000
 
 const round1 = (n) => Math.round(n * 10) / 10
 
@@ -170,49 +172,111 @@ async function playoffOdds(leagueId, season, week, teams, roster) {
     })
   }
 
-  const made = new Map(teams.map((t) => [t.id, 0]))
+  // From here down it is deliberately allocation-free and index-based. This is
+  // the only CPU-bound work in the whole cron, and a Worker invocation has a
+  // CPU budget an idiomatic version blew through: maps, object spreads and a
+  // comparator-with-closures sort per simulated season cost ~36ms, against a
+  // 10ms limit. Same maths, a fraction of the work.
+  const spots = playoffConfig.teams
+  const count = teams.length
+  const index = new Map(teams.map((team, i) => [team.id, i]))
+
+  const baseWins = Float64Array.from(base, (t) => t.wins)
+  const baseLosses = Float64Array.from(base, (t) => t.losses)
+  const baseTies = Float64Array.from(base, (t) => t.ties)
+  const basePoints = Float64Array.from(base, (t) => t.pointsFor)
+  const means = Float64Array.from(teams, (t) => strength.get(t.id).mean)
+  const sds = Float64Array.from(teams, (t) => strength.get(t.id).sd)
+
+  const playable = remaining.filter(
+    (g) => index.has(g.home_team_id) && index.has(g.away_team_id),
+  )
+  const homeIdx = Int32Array.from(playable, (g) => index.get(g.home_team_id))
+  const awayIdx = Int32Array.from(playable, (g) => index.get(g.away_team_id))
+
+  const wins = new Float64Array(count)
+  const losses = new Float64Array(count)
+  const ties = new Float64Array(count)
+  const points = new Float64Array(count)
+  const pct = new Float64Array(count)
+  const taken = new Uint8Array(count)
+  const made = new Int32Array(count)
+
+  // Box–Muller produces two independent draws at a time; keeping the spare
+  // halves the log/cos work, which is most of the remaining cost.
+  let spare = null
+  const normal = () => {
+    if (spare !== null) {
+      const value = spare
+      spare = null
+      return value
+    }
+    const u = Math.random() || Number.EPSILON
+    const v = 2 * Math.PI * Math.random()
+    const r = Math.sqrt(-2 * Math.log(u))
+    spare = r * Math.sin(v)
+    return r * Math.cos(v)
+  }
 
   for (let sim = 0; sim < SIMULATIONS; sim += 1) {
-    const table = new Map(base.map((t) => [t.teamId, { ...t }]))
+    wins.set(baseWins)
+    losses.set(baseLosses)
+    ties.set(baseTies)
+    points.set(basePoints)
 
-    for (const game of remaining) {
-      const home = table.get(game.home_team_id)
-      const away = table.get(game.away_team_id)
-      if (!home || !away) continue
-
-      const homeStrength = strength.get(game.home_team_id)
-      const awayStrength = strength.get(game.away_team_id)
-      const homeScore = gaussian(homeStrength.mean, homeStrength.sd)
-      const awayScore = gaussian(awayStrength.mean, awayStrength.sd)
-
-      home.pointsFor += homeScore
-      away.pointsFor += awayScore
+    for (let g = 0; g < homeIdx.length; g += 1) {
+      const h = homeIdx[g]
+      const a = awayIdx[g]
+      const homeScore = means[h] + sds[h] * normal()
+      const awayScore = means[a] + sds[a] * normal()
+      points[h] += homeScore
+      points[a] += awayScore
       if (homeScore > awayScore) {
-        home.wins += 1
-        away.losses += 1
+        wins[h] += 1
+        losses[a] += 1
       } else if (awayScore > homeScore) {
-        away.wins += 1
-        home.losses += 1
+        wins[a] += 1
+        losses[h] += 1
       } else {
-        home.ties += 1
-        away.ties += 1
+        ties[h] += 1
+        ties[a] += 1
       }
     }
 
-    for (const team of rank([...table.values()]).slice(0, playoffConfig.teams)) {
-      made.set(team.teamId, made.get(team.teamId) + 1)
+    for (let i = 0; i < count; i += 1) {
+      const played = wins[i] + losses[i] + ties[i]
+      pct[i] = played ? (wins[i] + ties[i] * 0.5) / played : 0
+    }
+
+    // Top seeds by win pct then points, picked one at a time. Sorting eight
+    // teams five thousand times is more work than four passes over them.
+    taken.fill(0)
+    for (let seed = 0; seed < spots; seed += 1) {
+      let best = -1
+      for (let i = 0; i < count; i += 1) {
+        if (taken[i]) continue
+        if (
+          best < 0 ||
+          pct[i] > pct[best] ||
+          (pct[i] === pct[best] && points[i] > points[best])
+        ) {
+          best = i
+        }
+      }
+      if (best < 0) break
+      taken[best] = 1
+      made[best] += 1
     }
   }
 
   return rank(base)
     .map((team) => ({
       ...team,
-      odds: Math.round((made.get(team.teamId) / SIMULATIONS) * 1000) / 10,
+      odds: Math.round((made[index.get(team.teamId)] / SIMULATIONS) * 100),
       settled: false,
     }))
     .sort((a, b) => b.odds - a.odds)
 }
-
 /** Highest (or lowest) by a key, ignoring rows where it is missing. */
 function pick(rows, key, direction = 'desc') {
   const usable = rows.filter((row) => row[key] != null)
