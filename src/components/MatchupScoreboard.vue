@@ -27,26 +27,54 @@ const cellPoints = (player) =>
 
 const winProb = computed(() => props.matchup.winProbability ?? null)
 
-/** Whichever side belongs to the viewer, so the bar reads from their point of view. */
-const mySide = computed(() => {
-  if (!winProb.value) return null
-  const id = props.myTeamId
-  if (home.value.team.id === id) return { pct: winProb.value.home, team: home.value.team, side: 'home' }
-  if (away.value.team.id === id) return { pct: winProb.value.away, team: away.value.team, side: 'away' }
-  // Spectating someone else's matchup: show it from the home side.
-  return { pct: winProb.value.home, team: home.value.team, side: 'home' }
+/**
+ * Which side the model likes, and by how much.
+ *
+ * The bar used to fill from the left with a single team's number — the
+ * viewer's if they were playing, otherwise the home team's. Home is drawn on
+ * the RIGHT, so watching somebody else's game gave a bar growing leftwards
+ * while describing the team on the right, and nothing said whose number it
+ * was. Now each side keeps its own half and the favourite is named.
+ */
+const favoured = computed(() => {
+  const wp = winProb.value
+  if (!wp || wp.home === wp.away) return null
+  return wp.home > wp.away
+    ? { pct: wp.home, team: home.value.team, side: 'home' }
+    : { pct: wp.away, team: away.value.team, side: 'away' }
+})
+
+/** The viewer's own chance — null when they aren't in this matchup. */
+const myPct = computed(() => {
+  const wp = winProb.value
+  if (!wp || props.myTeamId == null) return null
+  if (home.value.team.id === props.myTeamId) return wp.home
+  if (away.value.team.id === props.myTeamId) return wp.away
+  return null
 })
 
 const probLabel = computed(() => {
   const wp = winProb.value
-  if (!wp || !mySide.value) return ''
-  if (wp.settled) return mySide.value.pct >= 100 ? 'Won' : mySide.value.pct <= 0 ? 'Lost' : 'Tied'
-  const pct = mySide.value.pct
-  // Below 1% still isn't zero, and saying "0%" while the game is live is a lie.
-  if (pct > 0 && pct < 1) return '<1% to win'
-  if (pct < 100 && pct > 99) return '>99% to win'
-  return `${Math.round(pct)}% to win`
+  if (!wp) return ''
+  if (wp.settled) return favoured.value ? `${favoured.value.team.name} won` : 'Tied'
+  if (!favoured.value) return 'Dead even'
+  // Above 99% still is not certain, and rounding it to 100 reads as settled.
+  const chance = favoured.value.pct > 99 ? '>99%' : `${Math.round(favoured.value.pct)}%`
+  return `${favoured.value.team.name} ${chance} to win`
 })
+
+const widthFor = (side) => {
+  const wp = winProb.value
+  if (!wp) return 0
+  return Math.max(0, Math.min(100, side === 'home' ? wp.home : wp.away))
+}
+
+/** Below 1% is not zero, and above 99% is not a win. */
+const shortPct = (value) => {
+  if (value > 0 && value < 1) return '<1'
+  if (value > 99 && value < 100) return '>99'
+  return String(Math.round(value))
+}
 const awayLeads = computed(() => away.value.total > home.value.total)
 const margin = computed(() => Math.abs(home.value.total - away.value.total).toFixed(1))
 
@@ -109,17 +137,41 @@ const progress = (side) => {
       <span v-if="margin !== '0.0'" class="tiny faint">{{ margin }} apart</span>
     </div>
 
-    <div v-if="winProb && mySide" class="winprob">
+    <div v-if="winProb" class="winprob">
       <div class="wp-head">
-        <span class="wp-pct" :class="{ good: mySide.pct >= 50, bad: mySide.pct < 50 }">
+        <span
+          class="wp-pct"
+          :class="{ good: myPct !== null && myPct >= 50, bad: myPct !== null && myPct < 50 }"
+        >
           {{ probLabel }}
         </span>
         <span class="tiny faint">
           projected {{ winProb.projected.away.toFixed(1) }} – {{ winProb.projected.home.toFixed(1) }}
         </span>
       </div>
+      <!-- Two segments, laid out the way the teams are: away on the left,
+           home on the right. A single fill can only describe one of them,
+           and pointed the wrong way whenever that was the team on the right. -->
       <div class="wp-bar" role="img" :aria-label="probLabel">
-        <div class="wp-fill" :class="{ good: mySide.pct >= 50 }" :style="{ width: mySide.pct + '%' }" />
+        <div
+          class="wp-seg"
+          :class="{ lead: favoured?.side === 'away' }"
+          :style="{ width: widthFor('away') + '%' }"
+        />
+        <div
+          class="wp-seg"
+          :class="{ lead: favoured?.side === 'home' }"
+          :style="{ width: widthFor('home') + '%' }"
+        />
+      </div>
+
+      <div class="wp-ends tiny">
+        <span :class="{ mine: away.team.id === myTeamId }">
+          {{ away.team.abbreviation }} {{ shortPct(winProb.away) }}%
+        </span>
+        <span :class="{ mine: home.team.id === myTeamId }">
+          {{ home.team.abbreviation }} {{ shortPct(winProb.home) }}%
+        </span>
       </div>
     </div>
 
@@ -413,20 +465,35 @@ const progress = (side) => {
 }
 
 .wp-bar {
+  display: flex;
   height: 0.4rem;
   border-radius: 999px;
   background: var(--bg-inset);
   overflow: hidden;
 }
 
-.wp-fill {
+.wp-seg {
   height: 100%;
-  background: var(--warn);
+  background: var(--border-strong);
   transition: width 0.4s ease;
 }
 
-.wp-fill.good {
+.wp-seg.lead {
   background: var(--accent);
+}
+
+.wp-ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.wp-ends .mine {
+  color: var(--accent-hover);
+  font-weight: 600;
 }
 
 </style>

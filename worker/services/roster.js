@@ -15,6 +15,8 @@ import { rosterSlots, roster as rosterConfig, playoffs } from '../config.js'
 import { getLockState, isPlayerLocked, assertPlayerMovable, assertAllowed, playerLockReason } from './locks.js'
 import { getWeekPoints, getWeekProjections, getRestOfSeasonPoints } from './scoring.js'
 import { getTeamGameStatus } from './schedule.js'
+import { getTiming } from './settings.js'
+import { mostRecent, now as clockNow, toIso } from './clock.js'
 import { systemMessageStatement } from './chat.js'
 import {
   AVAILABILITY,
@@ -24,6 +26,28 @@ import {
 } from './players.js'
 
 const SLOT_BY_ID = new Map(rosterSlots.map((s) => [s.slot, s]))
+
+/**
+ * Where a dropped player goes.
+ *
+ * Normally waivers, so the rest of the league gets a shot before whoever cut
+ * them can sign them back. But a player signed and dropped inside the same
+ * waiver cycle goes straight back to free agency — otherwise anyone could
+ * put a free agent out of everyone else's reach until the next run simply by
+ * signing and cutting them, which is the opposite of what waivers are for.
+ *
+ * The line is the last waiver run: acquired since it, and they were never
+ * anyone else's to miss.
+ */
+async function dropDestination(leagueId, player) {
+  const timing = await getTiming(leagueId)
+  const lastRun = toIso(mostRecent(timing.waiverProcess, clockNow(timing.timezone), timing.timezone))
+  const signedThisCycle = Boolean(player?.acquired_at) && player.acquired_at >= lastRun
+
+  return signedThisCycle
+    ? { toFreeAgency: true, clearAt: null }
+    : { toFreeAgency: false, clearAt: await nextWaiverClearTime(leagueId) }
+}
 
 function httpError(message, status = 400, code) {
   const err = new Error(message)
@@ -376,7 +400,11 @@ export function acquisitionStatements({
             AND week = @week AND player_id = @playerId`,
         { leagueId, teamId, season, week, playerId: dropPlayerId },
       ),
-      poolStatements.placeOnWaivers(leagueId, dropPlayerId, dropClearAt),
+      // A null clear time means the drop goes back to free agency rather than
+      // waivers — see dropDestination.
+      dropClearAt
+        ? poolStatements.placeOnWaivers(leagueId, dropPlayerId, dropClearAt)
+        : poolStatements.clearWaiverState(leagueId, dropPlayerId),
       stmt(
         `INSERT INTO transactions (league_id, team_id, type, source, player_id, season, week, notes)
          VALUES (@leagueId, @teamId, 'drop', @source, @playerId, @season, @week, @notes)`,
@@ -437,7 +465,7 @@ export async function addFreeAgent({
   let dropping = null
   if (dropPlayerId) {
     dropping = await get(
-      `SELECT p.*, rp.on_ir FROM roster_players rp JOIN players p ON p.id = rp.player_id
+      `SELECT p.*, rp.on_ir, rp.acquired_at FROM roster_players rp JOIN players p ON p.id = rp.player_id
         WHERE rp.league_id = @leagueId AND rp.team_id = @teamId AND p.id = @playerId`,
       { leagueId, teamId, playerId: dropPlayerId },
     )
@@ -490,7 +518,7 @@ export async function addFreeAgent({
       addPlayerId,
       dropPlayerId,
       source: 'free_agent',
-      dropClearAt: await nextWaiverClearTime(leagueId),
+      dropClearAt: dropping ? (await dropDestination(leagueId, dropping)).clearAt : null,
       toIr,
     }),
     systemMessageStatement({
@@ -514,7 +542,7 @@ export async function dropPlayer({ leagueId, teamId, season, week, playerId }) {
   assertAllowed(locks, 'drop', `${locks.phaseLabel} — drops are closed.`)
 
   const player = await get(
-    `SELECT p.* FROM roster_players rp JOIN players p ON p.id = rp.player_id
+    `SELECT p.*, rp.acquired_at FROM roster_players rp JOIN players p ON p.id = rp.player_id
       WHERE rp.league_id = @leagueId AND rp.team_id = @teamId AND p.id = @playerId`,
     { leagueId, teamId, playerId },
   )
@@ -522,6 +550,7 @@ export async function dropPlayer({ leagueId, teamId, season, week, playerId }) {
   assertPlayerMovable(locks, player, 'drop')
 
   const droppingTeam = await get('SELECT name FROM teams WHERE id = @teamId', { teamId })
+  const destination = await dropDestination(leagueId, player)
 
   await batch([
     stmt('DELETE FROM roster_players WHERE league_id = @leagueId AND player_id = @playerId', {
@@ -534,7 +563,9 @@ export async function dropPlayer({ leagueId, teamId, season, week, playerId }) {
           AND week = @week AND player_id = @playerId`,
       { leagueId, teamId, season, week, playerId },
     ),
-    poolStatements.placeOnWaivers(leagueId, playerId, await nextWaiverClearTime(leagueId)),
+    destination.toFreeAgency
+      ? poolStatements.clearWaiverState(leagueId, playerId)
+      : poolStatements.placeOnWaivers(leagueId, playerId, destination.clearAt),
     stmt(
       `INSERT INTO transactions (league_id, team_id, type, source, player_id, season, week)
        VALUES (@leagueId, @teamId, 'drop', 'free_agent', @playerId, @season, @week)`,
@@ -544,8 +575,10 @@ export async function dropPlayer({ leagueId, teamId, season, week, playerId }) {
       leagueId,
       teamId,
       eventType: 'drop',
-      body: `${droppingTeam?.name ?? 'A team'} dropped ${player.full_name} to waivers.`,
-      meta: { playerId },
+      body:
+        `${droppingTeam?.name ?? 'A team'} dropped ${player.full_name} ` +
+        `${destination.toFreeAgency ? 'back to free agency.' : 'to waivers.'}`,
+      meta: { playerId, toFreeAgency: destination.toFreeAgency },
     }),
   ])
 
