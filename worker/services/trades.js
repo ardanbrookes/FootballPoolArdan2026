@@ -200,6 +200,12 @@ export async function respondToTrade({ leagueId, tradeId, teamId, accept, messag
     throw httpError(`This trade would put a roster over the ${rosterConfig.maxPlayers}-player limit.`, 409)
   }
 
+  // The lineup edit below has to name a week. Trades can only be accepted
+  // while the league is open for business, so that week is the one being
+  // played — never a finished one.
+  const current = await get('SELECT current_week FROM leagues WHERE id = @leagueId', { leagueId })
+  const lineupWeek = current?.current_week ?? trade.week
+
   const moveStatements = (playerId, toTeamId, fromTeamId) => [
     stmt(
       `UPDATE roster_players SET team_id = @toTeamId, acquired_via = 'trade',
@@ -207,11 +213,15 @@ export async function respondToTrade({ leagueId, tradeId, teamId, accept, messag
         WHERE league_id = @leagueId AND player_id = @playerId`,
       { leagueId, playerId, toTeamId },
     ),
-    // Pull the traded player out of the old team's lineup.
+    // Pull the traded player out of the old team's lineup — this week's only.
+    // Unscoped, this erased them from every week they had ever started,
+    // including finished ones, leaving holes in the history and scores that
+    // no longer added up to the results already posted.
     stmt(
       `UPDATE lineups SET player_id = NULL
-        WHERE league_id = @leagueId AND team_id = @fromTeamId AND player_id = @playerId`,
-      { leagueId, fromTeamId, playerId },
+        WHERE league_id = @leagueId AND team_id = @fromTeamId AND season = @season
+          AND week = @week AND player_id = @playerId`,
+      { leagueId, fromTeamId, playerId, season: trade.season, week: lineupWeek },
     ),
     stmt(
       `INSERT INTO transactions (league_id, team_id, type, source, player_id, related_team_id, season, week, notes)
